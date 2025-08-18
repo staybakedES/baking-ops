@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online Ordering System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7fafc;
+        }
+        .order-card {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .order-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
+        }
+        .animate-fadeIn {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .loading-spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<!-- Load React and ReactDOM from CDN -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+    'use strict';
+
+    const { useState, useEffect } = React;
+
+    // Helper functions for Firebase
+    function getFirebaseConfig() {
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase config is missing. Please check your environment variables.");
+        }
+        return firebaseConfig;
+    }
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+    const firebaseConfig = getFirebaseConfig();
+
+    let app, db, auth;
+    try {
+        if (firebaseConfig.projectId) {
+            app = firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            auth = firebase.auth();
+        } else {
+            console.error("Firebase project ID is not defined.");
+        }
+    } catch (e) {
+        console.error("Failed to initialize Firebase:", e);
+    }
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    // Main App component
+    function App() {
+        const [orders, setOrders] = useState([]);
+        const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+        const [newOrder, setNewOrder] = useState({
+            customerName: '',
+            itemName: '',
+            quantity: 1,
+            notes: ''
+        });
+        const [statusMessage, setStatusMessage] = useState('');
+        const [isAuthReady, setIsAuthReady] = useState(false);
+        const [userId, setUserId] = useState(null);
+
+        // Firebase Auth and Firestore setup
+        useEffect(() => {
+            if (!app || !auth || !db) return;
+
+            const signIn = async () => {
+                try {
+                    if (initialAuthToken) {
+                        await auth.signInWithCustomToken(initialAuthToken);
+                    } else {
+                        await auth.signInAnonymously();
+                    }
+                } catch (error) {
+                    console.error("Firebase authentication error:", error);
+                    setStatusMessage(`Authentication failed. Error: ${error.message}`);
+                }
+            };
+
+            const unsubscribe = auth.onAuthStateChanged(user => {
+                if (user) {
+                    setUserId(user.uid);
+                    setIsAuthReady(true);
+                } else {
+                    setUserId(null);
+                    setIsAuthReady(true);
+                    signIn();
+                }
+            });
+
+            return () => unsubscribe();
+        }, []);
+
+        useEffect(() => {
+            if (!isAuthReady || !db || !userId) return;
+
+            // Use a shared collection for all users to make it collaborative
+            const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
+            const unsubscribe = ordersCollectionRef.onSnapshot(
+                (snapshot) => {
+                    const fetchedOrders = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setOrders(fetchedOrders);
+                },
+                (error) => {
+                    console.error("Error fetching orders:", error);
+                    setStatusMessage(`Error fetching data: ${error.message}`);
+                }
+            );
+
+            return () => unsubscribe();
+        }, [isAuthReady, userId]);
+
+        // Handlers for managing orders
+        const handleNewOrderChange = (e) => {
+            const { name, value } = e.target;
+            setNewOrder(prev => ({ ...prev, [name]: value }));
+        };
+
+        const handleAddOrder = async () => {
+            if (!db || !userId) {
+                setStatusMessage('Authentication not ready. Please wait.');
+                return;
+            }
+            if (!newOrder.customerName || !newOrder.itemName || newOrder.quantity < 1) {
+                setStatusMessage('Please fill in all required fields.');
+                return;
+            }
+
+            // Use the public collection for adding new orders
+            const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
+            try {
+                await ordersCollectionRef.add({
+                    ...newOrder,
+                    quantity: Number(newOrder.quantity),
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    status: 'Pending',
+                });
+                setStatusMessage('Order added successfully!');
+                setNewOrder({
+                    customerName: '',
+                    itemName: '',
+                    quantity: 1,
+                    notes: ''
+                });
+                setIsNewOrderModalOpen(false);
+            } catch (error) {
+                console.error("Error adding document: ", error);
+                setStatusMessage(`Error adding order: ${error.message}`);
+            }
+        };
+
+        const handleDeleteOrder = async (id) => {
+            if (!db || !userId) {
+                setStatusMessage('Authentication not ready. Please wait.');
+                return;
+            }
+            // Use the public collection for deleting orders
+            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
+            try {
+                await docRef.delete();
+                setStatusMessage('Order deleted successfully!');
+            } catch (error) {
+                console.error("Error deleting document: ", error);
+                setStatusMessage(`Error deleting order: ${error.message}`);
+            }
+        };
+
+        const handleUpdateStatus = async (id, currentStatus) => {
+            if (!db || !userId) {
+                setStatusMessage('Authentication not ready. Please wait.');
+                return;
+            }
+            const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
+            // Use the public collection for updating order status
+            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
+            try {
+                await docRef.update({ status: newStatus });
+                setStatusMessage('Order status updated!');
+            } catch (error) {
+                console.error("Error updating document: ", error);
+                setStatusMessage(`Error updating status: ${error.message}`);
+            }
+        };
+
+        return (
+            <div className="min-h-screen bg-gray-100 p-8 flex flex-col items-center">
+                <header className="w-full max-w-4xl text-center py-6">
+                    <h1 className="text-4xl font-bold text-gray-800 mb-2">My Online Orders</h1>
+                    <p className="text-gray-600 mb-4">View and manage your customer orders in real-time. User ID: {userId || 'Loading...'}</p>
+                    <button
+                        onClick={() => setIsNewOrderModalOpen(true)}
+                        className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300"
+                    >
+                        <i className="fas fa-plus mr-2"></i> Add New Order
+                    </button>
+                </header>
+
+                <main className="w-full max-w-4xl mt-8">
+                    {statusMessage && (
+                        <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg relative mb-4">
+                            {statusMessage}
+                        </div>
+                    )}
+
+                    {!isAuthReady || !userId ? (
+                        <div className="flex justify-center items-center py-20">
+                            <div className="loading-spinner"></div>
+                        </div>
+                    ) : orders.length === 0 ? (
+                        <div className="text-center text-gray-500 py-10">
+                            <i className="fas fa-box-open text-6xl mb-4"></i>
+                            <p>You have no orders yet. Add a new one to get started!</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {orders.map(order => (
+                                <div key={order.id} className="order-card bg-white p-6 rounded-2xl shadow-md flex flex-col justify-between animate-fadeIn">
+                                    <div>
+                                        <h3 className="text-xl font-semibold text-gray-900 truncate">{order.itemName}</h3>
+                                        <p className="text-sm text-gray-500">for {order.customerName}</p>
+                                        <ul className="mt-4 text-gray-700 space-y-2">
+                                            <li><i className="fas fa-hashtag text-gray-400 mr-2"></i>Quantity: <span className="font-medium">{order.quantity}</span></li>
+                                            <li><i className="fas fa-info-circle text-gray-400 mr-2"></i>Notes: <span className="font-light italic">{order.notes || 'N/A'}</span></li>
+                                            <li>
+                                                <i className="fas fa-clock text-gray-400 mr-2"></i>
+                                                <span className={`font-semibold ${order.status === 'Completed' ? 'text-green-600' : 'text-yellow-600'}`}>
+                                                    {order.status}
+                                                </span>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                    <div className="flex items-center mt-6 space-x-2">
+                                        <button
+                                            onClick={() => handleUpdateStatus(order.id, order.status)}
+                                            className={`flex-grow py-2 px-4 text-white font-semibold rounded-lg transition duration-300
+                                                ${order.status === 'Pending' ? 'bg-green-500 hover:bg-green-600' : 'bg-yellow-500 hover:bg-yellow-600'}`}
+                                        >
+                                            <i className="fas fa-check-circle mr-2"></i>
+                                            {order.status === 'Pending' ? 'Mark Complete' : 'Mark Pending'}
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteOrder(order.id)}
+                                            className="bg-red-500 text-white p-3 rounded-full hover:bg-red-600 transition duration-300"
+                                        >
+                                            <i className="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </main>
+
+                {isNewOrderModalOpen && (
+                    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50">
+                        <div className="relative bg-white p-8 rounded-xl shadow-xl w-full max-w-md m-4">
+                            <h2 className="text-2xl font-bold mb-6 text-center">Add New Order</h2>
+                            <form onSubmit={(e) => { e.preventDefault(); handleAddOrder(); }}>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="customerName">Customer Name</label>
+                                    <input
+                                        type="text"
+                                        id="customerName"
+                                        name="customerName"
+                                        value={newOrder.customerName}
+                                        onChange={handleNewOrderChange}
+                                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                                        required
+                                    />
+                                </div>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="itemName">Item Name</label>
+                                    <input
+                                        type="text"
+                                        id="itemName"
+                                        name="itemName"
+                                        value={newOrder.itemName}
+                                        onChange={handleNewOrderChange}
+                                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                                        required
+                                    />
+                                </div>
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="quantity">Quantity</label>
+                                    <input
+                                        type="number"
+                                        id="quantity"
+                                        name="quantity"
+                                        value={newOrder.quantity}
+                                        onChange={handleNewOrderChange}
+                                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                                        min="1"
+                                        required
+                                    />
+                                </div>
+                                <div className="mb-6">
+                                    <label className="block text-gray-700 text-sm font-bold mb-2" htmlFor="notes">Notes</label>
+                                    <textarea
+                                        id="notes"
+                                        name="notes"
+                                        value={newOrder.notes}
+                                        onChange={handleNewOrderChange}
+                                        className="shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24 resize-none"
+                                    ></textarea>
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <button
+                                        type="submit"
+                                        className="bg-blue-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300 focus:outline-none focus:shadow-outline"
+                                    >
+                                        Add Order
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsNewOrderModalOpen(false)}
+                                        className="bg-gray-400 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-gray-500 transition duration-300 focus:outline-none focus:shadow-outline"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                )}
+            </div>
+            
+            <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+            <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+            <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+        </script>
+    </body>
+    </html>
