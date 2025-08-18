@@ -43,7 +43,13 @@
 </head>
 <body>
 
-<div id="root"></div>
+<!-- This message will show if the JavaScript fails to load -->
+<div id="initial-message" class="flex flex-col items-center justify-center min-h-screen text-center text-gray-500">
+    <p>Loading application...</p>
+</div>
+
+<!-- This is where the React app will be rendered -->
+<div id="root" style="display: none;"></div>
 
 <!-- Load React and ReactDOM from CDN -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -60,9 +66,6 @@
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
     // IMPORTANT: Paste your Firebase config object here to make the app work outside of the Canvas environment.
-    // Go to your Firebase project, click the gear icon next to "Project Overview", then select "Project settings".
-    // Under the "General" tab, scroll down to "Your apps" and click the "< >" icon for a web app.
-    // Copy the `firebaseConfig` object and paste it below.
     const myFirebaseConfig = {
         apiKey: "AIzaSyBIdpCnLgzYPTs8jgz4sjSYmSr_2T6dTI4",
         authDomain: "order-management-8c278.firebaseapp.com",
@@ -73,6 +76,9 @@
     };
 
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    // Firebase instances
+    let app, db, auth;
 
     // Main App component
     function App() {
@@ -88,28 +94,8 @@
         const [isAuthReady, setIsAuthReady] = useState(false);
         const [userId, setUserId] = useState(null);
 
-        // Firebase Auth and Firestore setup
+        // This effect handles authentication and Firestore setup
         useEffect(() => {
-            let app, db, auth;
-            
-            try {
-                if (typeof __firebase_config !== 'undefined') {
-                    const firebaseConfig = JSON.parse(__firebase_config);
-                    app = firebase.initializeApp(firebaseConfig);
-                } else if (myFirebaseConfig.projectId) {
-                    app = firebase.initializeApp(myFirebaseConfig);
-                } else {
-                    throw new Error("Firebase configuration is missing.");
-                }
-
-                db = firebase.firestore();
-                auth = firebase.auth();
-            } catch (error) {
-                setStatusMessage(`Initialization Error: ${error.message}`);
-                console.error("Firebase initialization failed:", error);
-                return;
-            }
-
             const signIn = async () => {
                 try {
                     if (initialAuthToken) {
@@ -130,7 +116,7 @@
                     setStatusMessage('');
                 } else {
                     setUserId(null);
-                    setIsAuthReady(true);
+                    setIsAuthReady(false);
                     setStatusMessage('User is not signed in. Attempting to sign in...');
                     signIn();
                 }
@@ -144,7 +130,6 @@
         useEffect(() => {
             if (!isAuthReady || !db || !userId) return;
 
-            // Use a shared collection for all users to make it collaborative
             const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
             const unsubscribeSnapshot = ordersCollectionRef.onSnapshot(
                 (snapshot) => {
@@ -164,7 +149,6 @@
             return () => unsubscribeSnapshot();
         }, [isAuthReady, userId]);
 
-        // Handlers for managing orders
         const handleNewOrderChange = (e) => {
             const { name, value } = e.target;
             setNewOrder(prev => ({ ...prev, [name]: value }));
@@ -180,7 +164,6 @@
                 return;
             }
 
-            // Use the public collection for adding new orders
             const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
             try {
                 await ordersCollectionRef.add({
@@ -208,7 +191,6 @@
                 setStatusMessage('Authentication not ready. Please wait.');
                 return;
             }
-            // Use the public collection for deleting orders
             const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
             try {
                 await docRef.delete();
@@ -225,7 +207,6 @@
                 return;
             }
             const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
-            // Use the public collection for updating order status
             const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
             try {
                 await docRef.update({ status: newStatus });
@@ -248,14 +229,12 @@
                         <i className="fas fa-plus mr-2"></i> Add New Order
                     </button>
                 </header>
-
                 <main className="w-full max-w-4xl mt-8">
                     {statusMessage && (
                         <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg relative mb-4">
                             {statusMessage}
                         </div>
                     )}
-
                     {!isAuthReady || !userId ? (
                         <div className="flex flex-col items-center justify-center py-20">
                             <div className="loading-spinner mb-4"></div>
@@ -379,6 +358,59 @@
                 )}
             </div>
             
-        </script>
-    </body>
-    </html>
+        );
+    }
+
+    // Use window.onload to ensure the entire page is loaded before trying to render the React app.
+    window.onload = function() {
+        try {
+            // First, initialize Firebase outside the React component.
+            if (typeof __firebase_config !== 'undefined') {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                app = firebase.initializeApp(firebaseConfig);
+            } else if (myFirebaseConfig.projectId) {
+                app = firebase.initializeApp(myFirebaseConfig);
+            } else {
+                throw new Error("Firebase configuration is missing.");
+            }
+            db = firebase.firestore();
+            auth = firebase.auth();
+            
+            // Hide the initial loading message.
+            document.getElementById('initial-message').style.display = 'none';
+
+            // Show the root div
+            document.getElementById('root').style.display = 'block';
+
+            // Render the App component into the root div.
+            const root = ReactDOM.createRoot(document.getElementById('root'));
+            root.render(<App />);
+        } catch (error) {
+            console.error("Application failed to render:", error);
+            const rootElement = document.getElementById('root');
+            const initialMessageElement = document.getElementById('initial-message');
+            
+            if (initialMessageElement) {
+                initialMessageElement.innerHTML = `
+                    <div class="p-8 text-center text-red-600">
+                        <h1 class="text-2xl font-bold mb-2">Fatal Error</h1>
+                        <p>The application could not be loaded. Please check the console for details.</p>
+                        <p class="mt-2 text-sm text-gray-500">Error: ${error.message}</p>
+                    </div>
+                `;
+                initialMessageElement.style.display = 'block';
+            } else if (rootElement) {
+                rootElement.innerHTML = `
+                    <div class="p-8 text-center text-red-600">
+                        <h1 class="text-2xl font-bold mb-2">Fatal Error</h1>
+                        <p>The application could not be loaded. Please check the console for details.</p>
+                        <p class="mt-2 text-sm text-gray-500">Error: ${error.message}</p>
+                    </div>
+                `;
+                rootElement.style.display = 'block';
+            }
+        }
+    };
+</script>
+</body>
+</html>
