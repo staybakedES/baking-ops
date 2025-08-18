@@ -72,29 +72,46 @@
         appId: "1:618028270118:web:ac7205417dad37cc4b5ce7"
     };
 
-    let app, db, auth;
-    let firebaseInitialized = false;
+    let app;
+    let db;
+    let auth;
 
-    // Check if the app is running in the Canvas environment
-    if (typeof __firebase_config !== 'undefined') {
-        const firebaseConfig = JSON.parse(__firebase_config);
-        app = firebase.initializeApp(firebaseConfig);
-        firebaseInitialized = true;
-    } 
-    // Otherwise, use the user-provided config
-    else if (myFirebaseConfig.projectId) {
-        app = firebase.initializeApp(myFirebaseConfig);
-        firebaseInitialized = true;
+    // A top-level component to handle all potential errors
+    function AppWrapper() {
+        const [appError, setAppError] = useState(null);
+
+        // This useEffect will run once when the component mounts
+        useEffect(() => {
+            try {
+                if (typeof __firebase_config !== 'undefined') {
+                    app = firebase.initializeApp(JSON.parse(__firebase_config));
+                } else if (myFirebaseConfig.projectId) {
+                    app = firebase.initializeApp(myFirebaseConfig);
+                } else {
+                    throw new Error("Firebase configuration is missing.");
+                }
+
+                db = firebase.firestore();
+                auth = firebase.auth();
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                setAppError(`Initialization Error: ${error.message}`);
+            }
+        }, []);
+
+        if (appError) {
+            return (
+                <div className="min-h-screen bg-gray-100 p-8 flex flex-col items-center justify-center text-center">
+                    <h1 className="text-2xl font-bold text-red-600 mb-4">Application Error</h1>
+                    <p className="text-gray-700">{appError}</p>
+                    <p className="mt-4 text-gray-500">Please check your Firebase configuration or security rules.</p>
+                </div>
+            );
+        }
+
+        // If no error, render the main application component
+        return <App />;
     }
-
-    if (firebaseInitialized) {
-        db = firebase.firestore();
-        auth = firebase.auth();
-    } else {
-        console.error("Firebase project ID is not defined. Please add your Firebase config to the code.");
-    }
-
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     // Main App component
     function App() {
@@ -113,6 +130,7 @@
         // Firebase Auth and Firestore setup
         useEffect(() => {
             if (!app || !auth || !db) {
+                // This state should be caught by AppWrapper, but is a good fallback
                 setStatusMessage('Firebase is not initialized. Please add your config to the code.');
                 return;
             }
