@@ -57,7 +57,12 @@
 
     // Helper functions for Firebase
     function getFirebaseConfig() {
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {apiKey: "AIzaSyBIdpCnLgzYPTs8jgz4sjSYmSr_2T6dTI4",
+  authDomain: "order-management-8c278.firebaseapp.com",
+  projectId: "order-management-8c278",
+  storageBucket: "order-management-8c278.firebasestorage.app",
+  messagingSenderId: "618028270118",
+  appId: "1:618028270118:web:ac7205417dad37cc4b5ce7"};
         if (Object.keys(firebaseConfig).length === 0) {
             console.error("Firebase config is missing. Please check your environment variables.");
         }
@@ -370,3 +375,4 @@
         </script>
     </body>
     </html>
+
