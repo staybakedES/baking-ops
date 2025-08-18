@@ -12,11 +12,11 @@
             font-family: 'Inter', sans-serif;
             background-color: #f7fafc;
         }
-        .order-card {
+        .order-card, .task-card {
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             transition: transform 0.2s, box-shadow 0.2s;
         }
-        .order-card:hover {
+        .order-card:hover, .task-card:hover {
             transform: translateY(-5px);
             box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
         }
@@ -63,6 +63,7 @@
 
     const { useState, useEffect } = React;
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     // IMPORTANT: Paste your Firebase config object here to make the app work outside of the Canvas environment.
     const myFirebaseConfig = {
@@ -74,8 +75,6 @@
         appId: "1:618028270118:web:ac7205417dad37cc4b5ce7"
     };
 
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
     // Firebase instances
     let app, db, auth;
 
@@ -83,11 +82,18 @@
     function App() {
         const [orders, setOrders] = useState([]);
         const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
+        const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+        const [selectedOrderId, setSelectedOrderId] = useState(null);
         const [newOrder, setNewOrder] = useState({
             customerName: '',
             itemName: '',
             quantity: 1,
             notes: ''
+        });
+        const [newTask, setNewTask] = useState({
+            description: '',
+            assignedTo: 'Baker 1',
+            status: 'Pending'
         });
         const [statusMessage, setStatusMessage] = useState('');
         const [isAuthReady, setIsAuthReady] = useState(false);
@@ -126,16 +132,26 @@
             };
         }, []);
 
+        // This effect fetches all orders and their tasks
         useEffect(() => {
             if (!isAuthReady || !db || !userId) return;
 
             const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
             const unsubscribeSnapshot = ordersCollectionRef.onSnapshot(
-                (snapshot) => {
-                    const fetchedOrders = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data()
-                    }));
+                async (snapshot) => {
+                    const fetchedOrders = [];
+                    for (const doc of snapshot.docs) {
+                        const orderData = { id: doc.id, ...doc.data(), tasks: [] };
+                        
+                        // Fetch tasks for each order
+                        const tasksSnapshot = await doc.ref.collection('tasks').get();
+                        orderData.tasks = tasksSnapshot.docs.map(taskDoc => ({
+                            id: taskDoc.id,
+                            ...taskDoc.data()
+                        }));
+
+                        fetchedOrders.push(orderData);
+                    }
                     setOrders(fetchedOrders);
                     setStatusMessage('');
                 },
@@ -151,6 +167,11 @@
         const handleNewOrderChange = (e) => {
             const { name, value } = e.target;
             setNewOrder(prev => ({ ...prev, [name]: value }));
+        };
+
+        const handleNewTaskChange = (e) => {
+            const { name, value } = e.target;
+            setNewTask(prev => ({ ...prev, [name]: value }));
         };
 
         const handleAddOrder = async () => {
@@ -169,19 +190,40 @@
                     ...newOrder,
                     quantity: Number(newOrder.quantity),
                     timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    status: 'Pending',
+                    orderStatus: 'Pending',
                 });
                 setStatusMessage('Order added successfully!');
-                setNewOrder({
-                    customerName: '',
-                    itemName: '',
-                    quantity: 1,
-                    notes: ''
-                });
+                setNewOrder({ customerName: '', itemName: '', quantity: 1, notes: '' });
                 setIsNewOrderModalOpen(false);
             } catch (error) {
-                console.error("Error adding document: ", error);
+                console.error("Error adding order: ", error);
                 setStatusMessage(`Error adding order: ${error.message}`);
+            }
+        };
+
+        const handleAddTask = async () => {
+            if (!db || !userId || !selectedOrderId) {
+                setStatusMessage('Authentication not ready or no order selected.');
+                return;
+            }
+            if (!newTask.description || !newTask.assignedTo) {
+                setStatusMessage('Please fill in all task fields.');
+                return;
+            }
+
+            const tasksCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(selectedOrderId).collection('tasks');
+            try {
+                await tasksCollectionRef.add({
+                    ...newTask,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+                setStatusMessage('Task added successfully!');
+                setNewTask({ description: '', assignedTo: 'Baker 1', status: 'Pending' });
+                setIsNewTaskModalOpen(false);
+                setSelectedOrderId(null);
+            } catch (error) {
+                console.error("Error adding task: ", error);
+                setStatusMessage(`Error adding task: ${error.message}`);
             }
         };
 
@@ -190,74 +232,117 @@
                 setStatusMessage('Authentication not ready. Please wait.');
                 return;
             }
+            // A more robust solution would delete all sub-collections first
             const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
             try {
                 await docRef.delete();
                 setStatusMessage('Order deleted successfully!');
             } catch (error) {
-                console.error("Error deleting document: ", error);
+                console.error("Error deleting order: ", error);
                 setStatusMessage(`Error deleting order: ${error.message}`);
             }
         };
 
-        const handleUpdateStatus = async (id, currentStatus) => {
+        const handleDeleteTask = async (orderId, taskId) => {
+            if (!db || !userId) {
+                setStatusMessage('Authentication not ready. Please wait.');
+                return;
+            }
+            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).collection('tasks').doc(taskId);
+            try {
+                await docRef.delete();
+                setStatusMessage('Task deleted successfully!');
+            } catch (error) {
+                console.error("Error deleting task: ", error);
+                setStatusMessage(`Error deleting task: ${error.message}`);
+            }
+        };
+
+        const handleUpdateTaskStatus = async (orderId, taskId, currentStatus) => {
             if (!db || !userId) {
                 setStatusMessage('Authentication not ready. Please wait.');
                 return;
             }
             const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
-            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
+            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).collection('tasks').doc(taskId);
             try {
                 await docRef.update({ status: newStatus });
-                setStatusMessage('Order status updated!');
+                setStatusMessage('Task status updated!');
             } catch (error) {
-                console.error("Error updating document: ", error);
-                setStatusMessage(`Error updating status: ${error.message}`);
+                console.error("Error updating task status: ", error);
+                setStatusMessage(`Error updating task status: ${error.message}`);
             }
         };
 
-        // This is the main render function for the component.
-        // It uses plain JavaScript and `React.createElement` instead of JSX.
+        const getTaskStatusColor = (status) => {
+            return status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+        };
+
+        const renderNewOrderModal = () => isNewOrderModalOpen && React.createElement(
+            'div',
+            { className: 'fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50' },
+            React.createElement(
+                'div',
+                { className: 'relative bg-white p-8 rounded-xl shadow-xl w-full max-w-md m-4' },
+                React.createElement('h2', { className: 'text-2xl font-bold mb-6 text-center' }, 'Add New Order'),
+                React.createElement(
+                    'form',
+                    { onSubmit: (e) => { e.preventDefault(); handleAddOrder(); } },
+                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'customerName' }, 'Customer Name'), React.createElement('input', { type: 'text', id: 'customerName', name: 'customerName', value: newOrder.customerName, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline', required: true })),
+                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'itemName' }, 'Item Name'), React.createElement('input', { type: 'text', id: 'itemName', name: 'itemName', value: newOrder.itemName, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline', required: true })),
+                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'quantity' }, 'Quantity'), React.createElement('input', { type: 'number', id: 'quantity', name: 'quantity', value: newOrder.quantity, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline', min: '1', required: true })),
+                    React.createElement('div', { className: 'mb-6' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'notes' }, 'Notes'), React.createElement('textarea', { id: 'notes', name: 'notes', value: newOrder.notes, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24 resize-none' })),
+                    React.createElement('div', { className: 'flex items-center justify-between' }, React.createElement('button', { type: 'submit', className: 'bg-blue-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300 focus:outline-none focus:shadow-outline' }, 'Add Order'), React.createElement('button', { type: 'button', onClick: () => setIsNewOrderModalOpen(false), className: 'bg-gray-400 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-gray-500 transition duration-300 focus:outline-none focus:shadow-outline' }, 'Cancel'))
+                )
+            )
+        );
+
+        const renderNewTaskModal = () => isNewTaskModalOpen && React.createElement(
+            'div',
+            { className: 'fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50' },
+            React.createElement(
+                'div',
+                { className: 'relative bg-white p-8 rounded-xl shadow-xl w-full max-w-md m-4' },
+                React.createElement('h2', { className: 'text-2xl font-bold mb-6 text-center' }, 'Add New Task'),
+                React.createElement(
+                    'form',
+                    { onSubmit: (e) => { e.preventDefault(); handleAddTask(); } },
+                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'description' }, 'Task Description'), React.createElement('textarea', { id: 'description', name: 'description', value: newTask.description, onChange: handleNewTaskChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24 resize-none', required: true })),
+                    React.createElement(
+                        'div',
+                        { className: 'mb-6' },
+                        React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'assignedTo' }, 'Assign To'),
+                        React.createElement(
+                            'select',
+                            { id: 'assignedTo', name: 'assignedTo', value: newTask.assignedTo, onChange: handleNewTaskChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline', required: true },
+                            React.createElement('option', { value: 'Baker 1' }, 'Baker 1'),
+                            React.createElement('option', { value: 'Baker 2' }, 'Baker 2')
+                        )
+                    ),
+                    React.createElement('div', { className: 'flex items-center justify-between' }, React.createElement('button', { type: 'submit', className: 'bg-blue-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300 focus:outline-none focus:shadow-outline' }, 'Add Task'), React.createElement('button', { type: 'button', onClick: () => { setIsNewTaskModalOpen(false); setSelectedOrderId(null); }, className: 'bg-gray-400 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-gray-500 transition duration-300 focus:outline-none focus:shadow-outline' }, 'Cancel'))
+                )
+            )
+        );
+
+        // Main render function
         return React.createElement(
             'div',
             { className: 'min-h-screen bg-gray-100 p-8 flex flex-col items-center' },
             React.createElement(
                 'header',
                 { className: 'w-full max-w-4xl text-center py-6' },
-                React.createElement('h1', { className: 'text-4xl font-bold text-gray-800 mb-2' }, 'My Online Orders'),
-                React.createElement('p', { className: 'text-gray-600 mb-4' }, 'View and manage your customer orders in real-time. User ID: ', userId || 'Loading...'),
-                React.createElement(
-                    'button',
-                    {
-                        onClick: () => setIsNewOrderModalOpen(true),
-                        className: 'bg-blue-600 text-white font-semibold py-2 px-6 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300'
-                    },
-                    React.createElement('i', { className: 'fas fa-plus mr-2' }),
-                    ' Add New Order'
-                )
+                React.createElement('h1', { className: 'text-4xl font-bold text-gray-800 mb-2' }, 'Bakery Order System'),
+                React.createElement('p', { className: 'text-gray-600 mb-4' }, 'Manage orders and tasks for your bakers. User ID: ', userId || 'Loading...'),
+                React.createElement('button', { onClick: () => setIsNewOrderModalOpen(true), className: 'bg-blue-600 text-white font-semibold py-2 px-6 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300' }, React.createElement('i', { className: 'fas fa-plus mr-2' }), ' Add New Order')
             ),
             React.createElement(
                 'main',
                 { className: 'w-full max-w-4xl mt-8' },
-                statusMessage && React.createElement(
-                    'div',
-                    { className: 'bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg relative mb-4' },
-                    statusMessage
-                ),
+                statusMessage && React.createElement('div', { className: 'bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg relative mb-4' }, statusMessage),
                 !isAuthReady || !userId ? (
-                    React.createElement(
-                        'div',
-                        { className: 'flex flex-col items-center justify-center py-20' },
-                        React.createElement('div', { className: 'loading-spinner mb-4' }),
-                        React.createElement('p', { className: 'text-gray-500' }, 'Connecting to Firebase...')
-                    )
+                    React.createElement('div', { className: 'flex flex-col items-center justify-center py-20' }, React.createElement('div', { className: 'loading-spinner mb-4' }), React.createElement('p', { className: 'text-gray-500' }, 'Connecting to Firebase...'))
                 ) : orders.length === 0 ? (
-                    React.createElement(
-                        'div',
-                        { className: 'text-center text-gray-500 py-10' },
-                        React.createElement('i', { className: 'fas fa-box-open text-6xl mb-4' }),
-                        React.createElement('p', null, 'You have no orders yet. Add a new one to get started!')
-                    )
+                    React.createElement('div', { className: 'text-center text-gray-500 py-10' }, React.createElement('i', { className: 'fas fa-box-open text-6xl mb-4' }), React.createElement('p', null, 'You have no orders yet. Add a new one to get started!'))
                 ) : (
                     React.createElement(
                         'div',
@@ -266,35 +351,51 @@
                             React.createElement(
                                 'div',
                                 { key: order.id, className: 'order-card bg-white p-6 rounded-2xl shadow-md flex flex-col justify-between animate-fadeIn' },
+                                React.createElement('h3', { className: 'text-xl font-semibold text-gray-900 truncate' }, order.itemName),
+                                React.createElement('p', { className: 'text-sm text-gray-500' }, 'for ', order.customerName, ' (Qty: ', order.quantity, ')'),
+                                React.createElement('p', { className: 'text-sm text-gray-500 mt-2 italic' }, 'Notes: ', order.notes || 'N/A'),
                                 React.createElement(
                                     'div',
-                                    null,
-                                    React.createElement('h3', { className: 'text-xl font-semibold text-gray-900 truncate' }, order.itemName),
-                                    React.createElement('p', { className: 'text-sm text-gray-500' }, 'for ', order.customerName),
-                                    React.createElement(
-                                        'ul',
-                                        { className: 'mt-4 text-gray-700 space-y-2' },
+                                    { className: 'mt-4' },
+                                    React.createElement('h4', { className: 'font-semibold text-gray-700' }, 'Tasks'),
+                                    order.tasks.length > 0 ? (
                                         React.createElement(
-                                            'li',
-                                            null,
-                                            React.createElement('i', { className: 'fas fa-hashtag text-gray-400 mr-2' }),
-                                            'Quantity: ',
-                                            React.createElement('span', { className: 'font-medium' }, order.quantity)
-                                        ),
-                                        React.createElement(
-                                            'li',
-                                            null,
-                                            React.createElement('i', { className: 'fas fa-info-circle text-gray-400 mr-2' }),
-                                            'Notes: ',
-                                            React.createElement('span', { className: 'font-light italic' }, order.notes || 'N/A')
-                                        ),
-                                        React.createElement(
-                                            'li',
-                                            null,
-                                            React.createElement('i', { className: 'fas fa-clock text-gray-400 mr-2' }),
-                                            React.createElement('span', { className: `font-semibold ${order.status === 'Completed' ? 'text-green-600' : 'text-yellow-600'}` }, order.status)
+                                            'ul',
+                                            { className: 'mt-2 space-y-2' },
+                                            order.tasks.map(task =>
+                                                React.createElement(
+                                                    'li',
+                                                    { key: task.id, className: `p-3 rounded-lg flex items-center justify-between ${getTaskStatusColor(task.status)}` },
+                                                    React.createElement('div', { className: 'flex-1' },
+                                                        React.createElement('p', { className: 'text-sm font-medium' }, task.description),
+                                                        React.createElement('p', { className: 'text-xs text-gray-600' }, 'Assigned to: ', React.createElement('span', { className: 'font-semibold' }, task.assignedTo))
+                                                    ),
+                                                    React.createElement(
+                                                        'div',
+                                                        { className: 'flex space-x-2 ml-4' },
+                                                        React.createElement(
+                                                            'button',
+                                                            {
+                                                                onClick: () => handleUpdateTaskStatus(order.id, task.id, task.status),
+                                                                className: `p-2 rounded-full transition duration-300 ${task.status === 'Pending' ? 'text-green-600 hover:bg-green-200' : 'text-yellow-600 hover:bg-yellow-200'}`
+                                                            },
+                                                            React.createElement('i', { className: `fas ${task.status === 'Pending' ? 'fa-check' : 'fa-undo-alt'}` })
+                                                        ),
+                                                        React.createElement(
+                                                            'button',
+                                                            {
+                                                                onClick: () => handleDeleteTask(order.id, task.id),
+                                                                className: 'p-2 rounded-full text-red-600 hover:bg-red-200 transition duration-300'
+                                                            },
+                                                            React.createElement('i', { className: 'fas fa-trash' })
+                                                        )
+                                                    )
+                                                )
+                                            )
                                         )
-                                    ),
+                                    ) : (
+                                        React.createElement('p', { className: 'text-sm text-gray-500 italic mt-2' }, 'No tasks for this order.')
+                                    )
                                 ),
                                 React.createElement(
                                     'div',
@@ -302,11 +403,14 @@
                                     React.createElement(
                                         'button',
                                         {
-                                            onClick: () => handleUpdateStatus(order.id, order.status),
-                                            className: `flex-grow py-2 px-4 text-white font-semibold rounded-lg transition duration-300 ${order.status === 'Pending' ? 'bg-green-500 hover:bg-green-600' : 'bg-yellow-500 hover:bg-yellow-600'}`
+                                            onClick: () => {
+                                                setSelectedOrderId(order.id);
+                                                setIsNewTaskModalOpen(true);
+                                            },
+                                            className: 'flex-grow py-2 px-4 text-white font-semibold rounded-lg transition duration-300 bg-purple-500 hover:bg-purple-600'
                                         },
-                                        React.createElement('i', { className: 'fas fa-check-circle mr-2' }),
-                                        order.status === 'Pending' ? 'Mark Complete' : 'Mark Pending'
+                                        React.createElement('i', { className: 'fas fa-tasks mr-2' }),
+                                        'Add Task'
                                     ),
                                     React.createElement(
                                         'button',
@@ -321,95 +425,8 @@
                         )
                     )
                 ),
-                isNewOrderModalOpen && React.createElement(
-                    'div',
-                    { className: 'fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50' },
-                    React.createElement(
-                        'div',
-                        { className: 'relative bg-white p-8 rounded-xl shadow-xl w-full max-w-md m-4' },
-                        React.createElement('h2', { className: 'text-2xl font-bold mb-6 text-center' }, 'Add New Order'),
-                        React.createElement(
-                            'form',
-                            { onSubmit: (e) => { e.preventDefault(); handleAddOrder(); } },
-                            React.createElement(
-                                'div',
-                                { className: 'mb-4' },
-                                React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'customerName' }, 'Customer Name'),
-                                React.createElement('input', {
-                                    type: 'text',
-                                    id: 'customerName',
-                                    name: 'customerName',
-                                    value: newOrder.customerName,
-                                    onChange: handleNewOrderChange,
-                                    className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline',
-                                    required: true
-                                })
-                            ),
-                            React.createElement(
-                                'div',
-                                { className: 'mb-4' },
-                                React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'itemName' }, 'Item Name'),
-                                React.createElement('input', {
-                                    type: 'text',
-                                    id: 'itemName',
-                                    name: 'itemName',
-                                    value: newOrder.itemName,
-                                    onChange: handleNewOrderChange,
-                                    className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline',
-                                    required: true
-                                })
-                            ),
-                            React.createElement(
-                                'div',
-                                { className: 'mb-4' },
-                                React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'quantity' }, 'Quantity'),
-                                React.createElement('input', {
-                                    type: 'number',
-                                    id: 'quantity',
-                                    name: 'quantity',
-                                    value: newOrder.quantity,
-                                    onChange: handleNewOrderChange,
-                                    className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline',
-                                    min: '1',
-                                    required: true
-                                })
-                            ),
-                            React.createElement(
-                                'div',
-                                { className: 'mb-6' },
-                                React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'notes' }, 'Notes'),
-                                React.createElement('textarea', {
-                                    id: 'notes',
-                                    name: 'notes',
-                                    value: newOrder.notes,
-                                    onChange: handleNewOrderChange,
-                                    className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24 resize-none'
-                                })
-                            ),
-                            React.createElement(
-                                'div',
-                                { className: 'flex items-center justify-between' },
-                                React.createElement(
-                                    'button',
-                                    {
-                                        type: 'submit',
-                                        className: 'bg-blue-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300 focus:outline-none focus:shadow-outline'
-                                    },
-                                    'Add Order'
-                                ),
-                                React.createElement(
-                                    'button',
-                                    {
-                                        type: 'button',
-                                        onClick: () => setIsNewOrderModalOpen(false),
-                                        className: 'bg-gray-400 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-gray-500 transition duration-300 focus:outline-none focus:shadow-outline'
-                                    },
-                                    'Cancel'
-                                )
-                            )
-                        )
-                    )
-                )
+                renderNewOrderModal(),
+                renderNewTaskModal()
             )
         );
     }
