@@ -49,42 +49,51 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 
 <script type="text/babel">
     'use strict';
 
     const { useState, useEffect } = React;
-
-    // Helper functions for Firebase
-    function getFirebaseConfig() {
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {apiKey: "AIzaSyBIdpCnLgzYPTs8jgz4sjSYmSr_2T6dTI4",
-  authDomain: "order-management-8c278.firebaseapp.com",
-  projectId: "order-management-8c278",
-  storageBucket: "order-management-8c278.firebasestorage.app",
-  messagingSenderId: "618028270118",
-  appId: "1:618028270118:web:ac7205417dad37cc4b5ce7"};
-        if (Object.keys(firebaseConfig).length === 0) {
-            console.error("Firebase config is missing. Please check your environment variables.");
-        }
-        return firebaseConfig;
-    }
-
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-    const firebaseConfig = getFirebaseConfig();
+    // IMPORTANT: Paste your Firebase config object here to make the app work outside of the Canvas environment.
+    // Go to your Firebase project, click the gear icon next to "Project Overview", then select "Project settings".
+    // Under the "General" tab, scroll down to "Your apps" and click the "< >" icon for a web app.
+    // Copy the `firebaseConfig` object and paste it below.
+    const myFirebaseConfig = {
+        apiKey: "AIzaSyBIdpCnLgzYPTs8jgz4sjSYmSr_2T6dTI4",
+        authDomain: "order-management-8c278.firebaseapp.com",
+        projectId: "order-management-8c278",
+        storageBucket: "order-management-8c278.firebasestorage.app",
+        messagingSenderId: "618028270118",
+        appId: "1:618028270118:web:ac7205417dad37cc4b5ce7"
+    };
 
     let app, db, auth;
-    try {
-        if (firebaseConfig.projectId) {
-            app = firebase.initializeApp(firebaseConfig);
-            db = firebase.firestore();
-            auth = firebase.auth();
-        } else {
-            console.error("Firebase project ID is not defined.");
-        }
-    } catch (e) {
-        console.error("Failed to initialize Firebase:", e);
+    let firebaseInitialized = false;
+
+    // Check if the app is running in the Canvas environment
+    if (typeof __firebase_config !== 'undefined') {
+        const firebaseConfig = JSON.parse(__firebase_config);
+        app = firebase.initializeApp(firebaseConfig);
+        firebaseInitialized = true;
+    } 
+    // Otherwise, use the user-provided config
+    else if (myFirebaseConfig.projectId) {
+        app = firebase.initializeApp(myFirebaseConfig);
+        firebaseInitialized = true;
     }
+
+    if (firebaseInitialized) {
+        db = firebase.firestore();
+        auth = firebase.auth();
+    } else {
+        console.error("Firebase project ID is not defined. Please add your Firebase config to the code.");
+    }
+
     const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
     // Main App component
@@ -103,7 +112,10 @@
 
         // Firebase Auth and Firestore setup
         useEffect(() => {
-            if (!app || !auth || !db) return;
+            if (!app || !auth || !db) {
+                setStatusMessage('Firebase is not initialized. Please add your config to the code.');
+                return;
+            }
 
             const signIn = async () => {
                 try {
@@ -368,10 +380,6 @@
                 )}
             </div>
             
-            <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-            <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-            <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-
         </script>
     </body>
     </html>
