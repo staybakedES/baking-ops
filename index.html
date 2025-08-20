@@ -23,7 +23,7 @@
     <!-- Load Babel to transpile JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Load Firebase libraries from CDN. Using v9 for better modularity. -->
+    <!-- Load Firebase libraries from CDN and expose them to the global scope -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
@@ -44,31 +44,35 @@
         window.firebaseDb = db;
         window.firebaseAuthToken = initialAuthToken;
         window.firebaseAppId = appId;
-        // Expose Firestore functions to global scope for the React component
+        window.initializeApp = initializeApp;
+        window.getAuth = getAuth;
+        window.getFirestore = getFirestore;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.signInAnonymously = signInAnonymously;
+        window.onAuthStateChanged = onAuthStateChanged;
         window.collection = collection;
         window.addDoc = addDoc;
         window.doc = doc;
         window.updateDoc = updateDoc;
         window.deleteDoc = deleteDoc;
         window.onSnapshot = onSnapshot;
-        window.onAuthStateChanged = onAuthStateChanged;
 
         // Sign in the user. We must do this before any Firestore operations.
         const signIn = async () => {
             try {
                 if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
+                    await window.signInWithCustomToken(auth, initialAuthToken);
                 } else {
-                    await signInAnonymously(auth);
+                    await window.signInAnonymously(auth);
                 }
                 console.log("Firebase authentication successful.");
             } catch (error) {
                 console.error("Firebase authentication error:", error);
             }
         };
-
         signIn();
     </script>
+
     <script type="text/babel">
         // All of the React components are defined within this script block.
         // This makes the code self-contained and ready to run.
@@ -80,8 +84,8 @@
           const [auth, setAuth] = useState(null);
           const [user, setUser] = useState(null);
           const [appId, setAppId] = useState(null);
+          const [isAuthReady, setIsAuthReady] = useState(false);
           const [orders, setOrders] = useState([]);
-          const [isLoading, setIsLoading] = useState(true);
           const [bakerName, setBakerName] = useState('');
           const [showAddOrderModal, setShowAddOrderModal] = useState(false);
           const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
@@ -91,7 +95,7 @@
           const [showConfirmModal, setShowConfirmModal] = useState(false);
           const [confirmAction, setConfirmAction] = useState(null);
 
-          // Initialize Firebase and set up authentication and data listener
+          // This useEffect handles the full Firebase initialization and authentication
           useEffect(() => {
             // Wait for Firebase to be initialized and exposed to the window
             if (window.firebaseApp && window.firebaseAuth && window.firebaseDb) {
@@ -101,39 +105,38 @@
 
               // Set up an auth state listener to get the user object
               const unsubscribeAuth = window.onAuthStateChanged(window.firebaseAuth, (authUser) => {
-                setUser(authUser);
-                console.log("Auth state changed. User:", authUser ? authUser.uid : 'null');
-                
-                // Once the user is authenticated, set up the Firestore listener
                 if (authUser) {
-                    const ordersColRef = window.collection(window.firebaseDb, `artifacts/${window.firebaseAppId}/public/data/orders`);
-                    const unsubscribeOrders = window.onSnapshot(ordersColRef, (snapshot) => {
-                        console.log("Received new orders snapshot. Processing...");
-                        const ordersData = snapshot.docs.map(orderDoc => ({
-                            id: orderDoc.id,
-                            ...orderDoc.data(),
-                        }));
-                        setOrders(ordersData);
-                        console.log("Orders updated:", ordersData.length, "orders found.");
-                        setIsLoading(false); // Turn off loading state after first data load
-                    }, (error) => {
-                        console.error("Error fetching orders:", error);
-                        setCustomModalMessage(`Error fetching orders: ${error.message}`);
-                        setShowCustomModal(true);
-                        setIsLoading(false); // Turn off loading on error too
-                    });
-                    return () => unsubscribeOrders();
+                  setUser(authUser);
                 } else {
-                    // If no user, set loading to false and clear orders
-                    setIsLoading(false);
-                    setOrders([]);
+                  setUser(null);
                 }
+                setIsAuthReady(true);
               });
               
               return () => unsubscribeAuth();
             }
           }, []);
-          
+
+          // This useEffect listens for orders, but only after authentication is ready
+          useEffect(() => {
+              let unsubscribeOrders = () => {};
+              if (isAuthReady && user && db && appId) {
+                  const ordersColRef = window.collection(db, `artifacts/${appId}/public/data/orders`);
+                  unsubscribeOrders = window.onSnapshot(ordersColRef, (snapshot) => {
+                      const ordersData = snapshot.docs.map(orderDoc => ({
+                          id: orderDoc.id,
+                          ...orderDoc.data(),
+                      }));
+                      setOrders(ordersData);
+                  }, (error) => {
+                      console.error("Error fetching orders:", error);
+                      setCustomModalMessage(`Error fetching orders: ${error.message}`);
+                      setShowCustomModal(true);
+                  });
+              }
+              return () => unsubscribeOrders();
+          }, [isAuthReady, user, db, appId]);
+
 
           // Function to add a new order and its tasks
           const handleAddOrder = async (orderData, tasks) => {
@@ -161,11 +164,9 @@
               await window.addDoc(ordersColRef, {
                 ...orderData,
                 tasks: taskObjects,
-                createdAt: new Date().toISOString(), // Use ISO string for consistency
+                createdAt: new Date().toISOString(),
                 userId: user.uid,
               });
-
-              console.log("New order and tasks added successfully.");
               setShowAddOrderModal(false);
             } catch (e) {
               console.error("Error adding document: ", e);
@@ -198,9 +199,7 @@
                 }
                 return task;
               });
-              console.log("Attempting to update tasks for order:", orderId);
               await window.updateDoc(orderRef, { tasks: updatedTasks });
-              console.log("Task updated successfully.");
             } catch (e) {
               console.error("Error updating task: ", e);
               setCustomModalMessage(`Error updating task: ${e.message}`);
@@ -216,11 +215,9 @@
               return;
             }
             try {
-              console.log("Attempting to delete order:", orderId);
               const orderRef = window.doc(db, `artifacts/${appId}/public/data/orders`, orderId);
               await window.deleteDoc(orderRef);
-              console.log("Order deleted successfully.");
-              setShowConfirmModal(false); // Close modal after successful deletion
+              setShowConfirmModal(false);
             } catch (e) {
               console.error("Error deleting order: ", e);
               setCustomModalMessage(`Error deleting order: ${e.message}`);
@@ -229,7 +226,7 @@
           };
 
           // Loading state handler
-          if (isLoading) {
+          if (!isAuthReady) {
             return (
               <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
                 <div className="p-8 bg-white dark:bg-gray-800 rounded-lg shadow-md text-center">
