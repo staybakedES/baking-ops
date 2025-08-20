@@ -26,7 +26,7 @@
     <!-- Load Firebase libraries from CDN. Using v9 for better modularity. -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
         import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
 
         // This script block will be executed once and provides the global variables needed for the React app
@@ -51,6 +51,7 @@
         window.updateDoc = updateDoc;
         window.deleteDoc = deleteDoc;
         window.onSnapshot = onSnapshot;
+        window.onAuthStateChanged = onAuthStateChanged;
 
         // Sign in the user. We must do this before any Firestore operations.
         const signIn = async () => {
@@ -89,34 +90,25 @@
           const [customModalMessage, setCustomModalMessage] = useState('');
           const [showConfirmModal, setShowConfirmModal] = useState(false);
           const [confirmAction, setConfirmAction] = useState(null);
-          const [firestoreReady, setFirestoreReady] = useState(false);
 
-          // Initialize Firebase and set up authentication
+          // Initialize Firebase and set up authentication and data listener
           useEffect(() => {
             // Wait for Firebase to be initialized and exposed to the window
             if (window.firebaseApp && window.firebaseAuth && window.firebaseDb) {
               setDb(window.firebaseDb);
               setAuth(window.firebaseAuth);
               setAppId(window.firebaseAppId);
-              setFirestoreReady(true);
 
               // Set up an auth state listener to get the user object
-              const unsubscribe = window.firebaseAuth.onAuthStateChanged((authUser) => {
+              const unsubscribeAuth = window.onAuthStateChanged(window.firebaseAuth, (authUser) => {
                 setUser(authUser);
                 setIsLoading(false);
                 console.log("Auth state changed. User:", authUser ? authUser.uid : 'null');
               });
-              return () => unsubscribe();
-            }
-          }, []);
-          
-
-          // Listen for real-time updates to the orders collection
-          useEffect(() => {
-            if (db && user && appId && firestoreReady) {
-              console.log("Setting up real-time listener for orders...");
-              const ordersColRef = window.collection(db, `artifacts/${appId}/public/data/orders`);
-              const unsubscribe = window.onSnapshot(ordersColRef, (snapshot) => {
+              
+              // Set up real-time listener for orders
+              const ordersColRef = window.collection(window.firebaseDb, `artifacts/${window.firebaseAppId}/public/data/orders`);
+              const unsubscribeOrders = window.onSnapshot(ordersColRef, (snapshot) => {
                 console.log("Received new orders snapshot. Processing...");
                 const ordersData = snapshot.docs.map(orderDoc => ({
                   id: orderDoc.id,
@@ -129,12 +121,15 @@
                 setCustomModalMessage(`Error fetching orders: ${error.message}`);
                 setShowCustomModal(true);
               });
+
               return () => {
-                unsubscribe();
-                console.log("Unsubscribed from orders listener.");
+                unsubscribeAuth();
+                unsubscribeOrders();
+                console.log("Unsubscribed from all listeners.");
               };
             }
-          }, [db, user, appId, firestoreReady]);
+          }, []);
+          
 
           // Function to add a new order and its tasks
           const handleAddOrder = async (orderData, tasks) => {
