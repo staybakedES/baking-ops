@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bakery Ordering System</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <title>Bakery Order Board</title>
+    <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -12,414 +12,653 @@
             font-family: 'Inter', sans-serif;
             background-color: #f7fafc;
         }
-        .order-card, .task-card {
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .order-card:hover, .task-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
-        }
-        .animate-fadeIn {
-            animation: fadeIn 0.5s ease-in-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .loading-spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
     </style>
 </head>
 <body>
+    <div id="root"></div>
 
-<!-- This message will show if the JavaScript fails to load -->
-<div id="initial-message" class="flex flex-col items-center justify-center min-h-screen text-center text-gray-500">
-    <p>Loading application...</p>
-</div>
+    <!-- Load React and ReactDOM from CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Load Babel to transpile JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<!-- This is where the React app will be rendered -->
-<div id="root" style="display: none;"></div>
+    <!-- Load Firebase libraries from CDN -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 
-<!-- Load React and ReactDOM from CDN -->
-<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script type="text/babel">
+        // All of the React components are defined within this script block.
+        // This makes the code self-contained and ready to run.
+        const { useState, useEffect } = React;
 
-<script>
-    'use strict';
+        // Main App component
+        const App = () => {
+          const [db, setDb] = useState(null);
+          const [auth, setAuth] = useState(null);
+          const [user, setUser] = useState(null);
+          const [orders, setOrders] = useState([]);
+          const [isLoading, setIsLoading] = useState(true);
+          const [bakerName, setBakerName] = useState('');
+          const [showAddOrderModal, setShowAddOrderModal] = useState(false);
+          const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
+          const [selectedOrder, setSelectedOrder] = useState(null);
+          const [showCustomModal, setShowCustomModal] = useState(false);
+          const [customModalMessage, setCustomModalMessage] = useState('');
+          const [showConfirmModal, setShowConfirmModal] = useState(false);
+          const [confirmAction, setConfirmAction] = useState(null);
 
-    const { useState, useEffect } = React;
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+          // Constants for Firebase and user IDs
+          const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+          const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+          const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 
-    // IMPORTANT: Paste your Firebase config object here to make the app work outside of the Canvas environment.
-    const myFirebaseConfig = {
-        apiKey: "AIzaSyBIdpCnLgzYPTs8jgz4sjSYmSr_2T6dTI4",
-        authDomain: "order-management-8c278.firebaseapp.com",
-        projectId: "order-management-8c278",
-        storageBucket: "order-management-8c278.firebasestorage.app",
-        messagingSenderId: "618028270118",
-        appId: "1:618028270118:web:ac7205417dad37cc4b5ce7"
-    };
+          // Initialize Firebase and set up authentication
+          useEffect(() => {
+            const initializeFirebase = async () => {
+              try {
+                console.log("Initializing Firebase app...");
+                const app = firebase.initializeApp(firebaseConfig);
+                const authInstance = firebase.auth();
+                const dbInstance = firebase.firestore();
 
-    // Firebase instances
-    let app, db, auth;
+                setAuth(authInstance);
+                setDb(dbInstance);
 
-    // Main App component
-    function App() {
-        const [orders, setOrders] = useState([]);
-        const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
-        const [isAuthReady, setIsAuthReady] = useState(false);
-        const [userId, setUserId] = useState(null);
-        const [statusMessage, setStatusMessage] = useState('');
-        const [newOrder, setNewOrder] = useState({
-            client: '',
-            dueDate: '',
-            notes: '',
-            orderItems: ''
-        });
-
-        // This effect handles authentication and Firestore setup
-        useEffect(() => {
-            const signIn = async () => {
-                try {
-                    if (initialAuthToken) {
-                        await auth.signInWithCustomToken(initialAuthToken);
-                    } else {
-                        await auth.signInAnonymously();
-                    }
-                } catch (error) {
-                    setStatusMessage(`Authentication failed. Error: ${error.message}`);
-                    console.error("Firebase authentication error:", error);
-                }
-            };
-
-            const unsubscribeAuth = auth.onAuthStateChanged(user => {
-                if (user) {
-                    setUserId(user.uid);
-                    setIsAuthReady(true);
-                    setStatusMessage('');
+                if (initialAuthToken) {
+                  console.log("Signing in with custom token...");
+                  await authInstance.signInWithCustomToken(initialAuthToken);
                 } else {
-                    setUserId(null);
-                    setIsAuthReady(false);
-                    setStatusMessage('User is not signed in. Attempting to sign in...');
-                    signIn();
+                  console.log("Signing in anonymously...");
+                  await authInstance.signInAnonymously();
                 }
-            });
-
-            return () => {
-                unsubscribeAuth();
+                console.log("Firebase initialized successfully.");
+              } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                setCustomModalMessage(`Error initializing Firebase: ${error.message}`);
+                setShowCustomModal(true);
+              }
             };
-        }, []);
+            initializeFirebase();
+          }, [initialAuthToken, JSON.stringify(firebaseConfig)]);
 
-        // This effect fetches all orders and their tasks
-        useEffect(() => {
-            if (!isAuthReady || !db || !userId) return;
+          // Listen for authentication state changes and set the user
+          useEffect(() => {
+            if (auth) {
+              const unsubscribe = auth.onAuthStateChanged((authUser) => {
+                setUser(authUser);
+                setIsLoading(false);
+                console.log("Auth state changed. User:", authUser ? authUser.uid : 'null');
+              });
+              return () => unsubscribe();
+            }
+          }, [auth]);
 
-            const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
-            const unsubscribeSnapshot = ordersCollectionRef.onSnapshot(
-                async (snapshot) => {
-                    const fetchedOrders = [];
-                    for (const doc of snapshot.docs) {
-                        const orderData = { id: doc.id, ...doc.data(), tasks: [] };
-                        
-                        // Fetch tasks for each order
-                        const tasksSnapshot = await doc.ref.collection('tasks').get();
-                        orderData.tasks = tasksSnapshot.docs.map(taskDoc => ({
-                            id: taskDoc.id,
-                            ...taskDoc.data()
-                        }));
+          // Listen for real-time updates to the orders collection
+          useEffect(() => {
+            if (db && user) {
+              console.log("Setting up real-time listener for orders...");
+              const ordersColRef = db.collection(`artifacts/${appId}/public/data/orders`);
+              const unsubscribe = ordersColRef.onSnapshot((snapshot) => {
+                console.log("Received new orders snapshot. Processing...");
+                const ordersData = snapshot.docs.map(orderDoc => ({
+                  id: orderDoc.id,
+                  ...orderDoc.data(),
+                }));
+                setOrders(ordersData);
+                console.log("Orders updated:", ordersData.length, "orders found.");
+              }, (error) => {
+                console.error("Error fetching orders:", error);
+                setCustomModalMessage(`Error fetching orders: ${error.message}`);
+                setShowCustomModal(true);
+              });
+              return () => {
+                unsubscribe();
+                console.log("Unsubscribed from orders listener.");
+              };
+            }
+          }, [db, user, appId]);
 
-                        fetchedOrders.push(orderData);
-                    }
-                    setOrders(fetchedOrders);
-                    setStatusMessage('');
-                },
-                (error) => {
-                    console.error("Error fetching orders:", error);
-                    setStatusMessage(`Error fetching data: ${error.message}`);
+          // Function to add a new order and its tasks
+          const handleAddOrder = async (orderData, tasks) => {
+            if (!db || !user) {
+              setCustomModalMessage("Database or user authentication not ready. Please try again.");
+              setShowCustomModal(true);
+              return;
+            }
+            try {
+              console.log("Attempting to add new order...");
+              const taskObjects = tasks.map(taskName => ({
+                taskName,
+                status: 'New',
+                assignedBaker: '',
+                id: crypto.randomUUID()
+              }));
+
+              await db.collection(`artifacts/${appId}/public/data/orders`).add({
+                ...orderData,
+                tasks: taskObjects,
+                createdAt: new Date(),
+                userId: user.uid,
+              });
+
+              console.log("New order and tasks added successfully.");
+              setShowAddOrderModal(false);
+            } catch (e) {
+              console.error("Error adding document: ", e);
+              setCustomModalMessage(`Error adding order: ${e.message}`);
+              setShowCustomModal(true);
+            }
+          };
+
+          // Function to update a task's status and assigned baker
+          const handleUpdateTask = async (orderId, taskId, newStatus, assignedBaker) => {
+            if (!db) {
+              setCustomModalMessage("Database not initialized. Please try again.");
+              setShowCustomModal(true);
+              return;
+            }
+            try {
+              const orderRef = db.collection(`artifacts/${appId}/public/data/orders`).doc(orderId);
+              const orderToUpdate = orders.find(order => order.id === orderId);
+              if (!orderToUpdate) {
+                console.error("Order not found for update.");
+                return;
+              }
+              const updatedTasks = orderToUpdate.tasks.map(task => {
+                if (task.id === taskId) {
+                  return {
+                    ...task,
+                    status: newStatus,
+                    assignedBaker: assignedBaker
+                  };
                 }
+                return task;
+              });
+              console.log("Attempting to update tasks for order:", orderId);
+              await orderRef.update({ tasks: updatedTasks });
+              console.log("Task updated successfully.");
+            } catch (e) {
+              console.error("Error updating task: ", e);
+              setCustomModalMessage(`Error updating task: ${e.message}`);
+              setShowCustomModal(true);
+            }
+          };
+
+          // Function to delete an order
+          const handleDeleteOrder = async (orderId) => {
+            if (!db) {
+              setCustomModalMessage("Database not initialized. Please try again.");
+              setShowCustomModal(true);
+              return;
+            }
+            try {
+              console.log("Attempting to delete order:", orderId);
+              const orderRef = db.collection(`artifacts/${appId}/public/data/orders`).doc(orderId);
+              await orderRef.delete();
+              console.log("Order deleted successfully.");
+              setShowConfirmModal(false); // Close modal after successful deletion
+            } catch (e) {
+              console.error("Error deleting order: ", e);
+              setCustomModalMessage(`Error deleting order: ${e.message}`);
+              setShowCustomModal(true);
+            }
+          };
+
+          // Loading state handler
+          if (isLoading) {
+            return (
+              <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
+                <div className="p-8 bg-white dark:bg-gray-800 rounded-lg shadow-md text-center">
+                  <svg className="animate-spin h-10 w-10 text-rose-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.08 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <p className="mt-4 text-gray-700 dark:text-gray-300">Setting up the bakery...</p>
+                </div>
+              </div>
             );
+          }
 
-            return () => unsubscribeSnapshot();
-        }, [isAuthReady, userId]);
+          return (
+            <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-50 p-4 font-sans">
+              <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+                <div className="flex items-center justify-between flex-wrap mb-6">
+                  <h1 className="text-3xl sm:text-4xl font-extrabold text-rose-600 dark:text-rose-400">
+                    Bakery Order Board
+                  </h1>
+                  <div className="mt-4 sm:mt-0 flex items-center space-x-4">
+                    <span className="text-sm text-gray-500 dark:text-gray-400 truncate">
+                      Your User ID: {user ? user.uid : 'Loading...'}
+                    </span>
+                    <button
+                      onClick={() => setShowAddOrderModal(true)}
+                      className="bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-full shadow-lg transform transition duration-200 hover:scale-105"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 inline-block mr-2" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                      </svg>
+                      Add New Order
+                    </button>
+                  </div>
+                </div>
 
-        const handleNewOrderChange = (e) => {
-            const { name, value } = e.target;
-            setNewOrder(prev => ({ ...prev, [name]: value }));
+                {/* Baker Name Input */}
+                <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-4 mb-8">
+                  <label htmlFor="bakerName" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Enter Your Name (for assigning tasks):
+                  </label>
+                  <input
+                    type="text"
+                    id="bakerName"
+                    value={bakerName}
+                    onChange={(e) => setBakerName(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-rose-500 focus:border-rose-500 sm:text-sm"
+                    placeholder="e.g., Jane Doe"
+                  />
+                </div>
+
+                {/* Main Orders Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {orders.length === 0 ? (
+                    <p className="col-span-full text-center text-gray-500 dark:text-gray-400 py-12">
+                      No orders yet. Add your first order to get started!
+                    </p>
+                  ) : (
+                    orders.map((order) => (
+                      <OrderCard
+                        key={order.id}
+                        order={order}
+                        onDelete={() => {
+                            setConfirmAction(() => () => handleDeleteOrder(order.id));
+                            setCustomModalMessage("Are you sure you want to delete this order? This action cannot be undone.");
+                            setShowConfirmModal(true);
+                        }}
+                        onSelect={() => {
+                          setSelectedOrder(order);
+                          setShowOrderDetailsModal(true);
+                        }}
+                      />
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Add Order Modal */}
+              {showAddOrderModal && (
+                <Modal onClose={() => setShowAddOrderModal(false)}>
+                  <AddOrderForm onAddOrder={handleAddOrder} />
+                </Modal>
+              )}
+
+              {/* Order Details Modal */}
+              {showOrderDetailsModal && selectedOrder && (
+                <Modal onClose={() => setShowOrderDetailsModal(false)}>
+                  <OrderDetails
+                    order={selectedOrder}
+                    bakerName={bakerName}
+                    onUpdateTask={handleUpdateTask}
+                  />
+                </Modal>
+              )}
+
+              {/* Custom Alert/Message Modal */}
+              {showCustomModal && (
+                <Modal onClose={() => setShowCustomModal(false)}>
+                  <div className="p-6 text-center">
+                    <p className="text-xl font-semibold text-gray-800 dark:text-gray-200">{customModalMessage}</p>
+                    <button
+                      onClick={() => setShowCustomModal(false)}
+                      className="mt-6 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-full shadow-lg transition duration-200"
+                    >
+                      OK
+                    </button>
+                  </div>
+                </Modal>
+              )}
+              
+              {/* Custom Confirmation Modal */}
+              {showConfirmModal && (
+                <Modal onClose={() => setShowConfirmModal(false)}>
+                  <div className="p-6 text-center">
+                    <p className="text-xl font-semibold text-gray-800 dark:text-gray-200">{customModalMessage}</p>
+                    <div className="mt-6 flex justify-center space-x-4">
+                      <button
+                        onClick={() => {
+                          if (confirmAction) {
+                            confirmAction();
+                          }
+                        }}
+                        className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full shadow-lg transition duration-200"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        onClick={() => setShowConfirmModal(false)}
+                        className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-full shadow-lg transition duration-200"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </Modal>
+              )}
+            </div>
+          );
         };
 
-        const handleAddOrder = async () => {
-            if (!db || !userId) {
-                setStatusMessage('Authentication not ready. Please wait.');
-                return;
-            }
-            if (!newOrder.client || !newOrder.dueDate || !newOrder.orderItems) {
-                setStatusMessage('Please fill in all required fields.');
-                return;
-            }
+        // Order Card Component
+        const OrderCard = ({ order, onDelete, onSelect }) => {
+          const completedTasks = (order.tasks || []).filter(task => task.status === 'Completed').length;
+          const totalTasks = (order.tasks || []).length;
+          const progress = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+          
+          const getProgressColor = () => {
+            if (progress === 100) return 'bg-green-500';
+            if (progress > 0) return 'bg-yellow-500';
+            return 'bg-gray-400';
+          };
 
-            const ordersCollectionRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders');
-            try {
-                // First, add the main order document
-                const newOrderRef = await ordersCollectionRef.add({
-                    client: newOrder.client,
-                    dueDate: newOrder.dueDate,
-                    notes: newOrder.notes,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                });
+          return (
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 border border-gray-200 dark:border-gray-700 transition-transform duration-200 hover:scale-105 cursor-pointer flex flex-col justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-rose-600 dark:text-rose-400 truncate">{order.customerName || 'No Name'}</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Due: {new Date(order.dueDate).toLocaleDateString()} at {order.dueTime}</p>
+                <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mt-2">
+                  Tasks Completed: {completedTasks}/{totalTasks}
+                </p>
+              </div>
 
-                // Then, create tasks from the order items
-                const items = newOrder.orderItems.split('\n').map(item => item.trim()).filter(item => item.length > 0);
-                const tasksCollectionRef = newOrderRef.collection('tasks');
-                for (const item of items) {
-                    await tasksCollectionRef.add({
-                        description: item,
-                        assignedTo: null, // Initially unassigned
-                        status: 'Pending',
-                        timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    });
-                }
-
-                setStatusMessage('Order and tasks added successfully!');
-                setNewOrder({ client: '', dueDate: '', notes: '', orderItems: '' });
-                setIsNewOrderModalOpen(false);
-            } catch (error) {
-                console.error("Error adding order: ", error);
-                setStatusMessage(`Error adding order: ${error.message}`);
-            }
+              <div className="mt-4 w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                <div className={`h-2.5 rounded-full ${getProgressColor()}`} style={{ width: `${progress}%` }}></div>
+              </div>
+              
+              <div className="flex space-x-2 mt-4">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect();
+                  }}
+                  className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-200"
+                >
+                  View Tasks
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete();
+                  }}
+                  className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-200"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.166a40.415 40.415 0 0 1-.189 3.208.54.54 0 0 1-.587.514C3.25 9.176 1.5 8.232 1.5 6.75c0-1.228 1.503-2.222 3.352-2.222.188 0 .367.015.545.045m-3.92 4.053a.545.545 0 0 0 .545.045m-3.92 4.053a.545.545 0 0 0 .545.045" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          );
         };
 
-        const handleUpdateTaskAssignment = async (orderId, taskId, newAssignment) => {
-            if (!db || !userId) {
-                setStatusMessage('Authentication not ready. Please wait.');
-                return;
+        // Add Order Form Component
+        const AddOrderForm = ({ onAddOrder }) => {
+          const [customerName, setCustomerName] = useState('');
+          const [dueDate, setDueDate] = useState('');
+          const [dueTime, setDueTime] = useState('');
+          const [tasks, setTasks] = useState(['']);
+          const [showCustomModal, setShowCustomModal] = useState(false);
+          const [customModalMessage, setCustomModalMessage] = useState('');
+
+          const handleTaskChange = (index, value) => {
+            const newTasks = [...tasks];
+            newTasks[index] = value;
+            setTasks(newTasks);
+          };
+
+          const handleAddTask = () => {
+            setTasks([...tasks, '']);
+          };
+
+          const handleRemoveTask = (index) => {
+            const newTasks = tasks.filter((_, i) => i !== index);
+            setTasks(newTasks);
+          };
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            const filteredTasks = tasks.filter(task => task.trim() !== '');
+            if (!customerName || !dueDate || !dueTime || filteredTasks.length === 0) {
+              setCustomModalMessage("Please fill in all order details and add at least one task.");
+              setShowCustomModal(true);
+              return;
             }
-            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).collection('tasks').doc(taskId);
-            try {
-                await docRef.update({ assignedTo: newAssignment });
-                setStatusMessage('Task assignment updated!');
-            } catch (error) {
-                console.error("Error updating task assignment: ", error);
-                setStatusMessage(`Error updating task assignment: ${error.message}`);
-            }
+            onAddOrder({ customerName, dueDate, dueTime }, filteredTasks);
+          };
+
+          return (
+            <form onSubmit={handleSubmit} className="p-6">
+              <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-6">Create New Order</h3>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="customerName" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Customer Name</label>
+                  <input
+                    type="text"
+                    id="customerName"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-rose-500 focus:border-rose-500"
+                    placeholder="e.g., Jane Smith"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="dueDate" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Due Date</label>
+                  <input
+                    type="date"
+                    id="dueDate"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-rose-500 focus:border-rose-500"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="dueTime" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Due Time</label>
+                  <input
+                    type="time"
+                    id="dueTime"
+                    value={dueTime}
+                    onChange={(e) => setDueTime(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-rose-500 focus:border-rose-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Tasks</label>
+                  {tasks.map((task, index) => (
+                    <div key={index} className="flex items-center mt-2">
+                      <input
+                        type="text"
+                        value={task}
+                        onChange={(e) => handleTaskChange(index, e.target.value)}
+                        className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm focus:outline-none focus:ring-rose-500 focus:border-rose-500"
+                        placeholder="e.g., Bake 2 dozen vanilla cupcakes"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveTask(index)}
+                        className="ml-2 text-red-500 hover:text-red-700"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.035 21H7.965a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={handleAddTask}
+                    className="mt-2 text-rose-500 hover:text-rose-700 flex items-center"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                    </svg>
+                    Add another task
+                  </button>
+                </div>
+              </div>
+              <div className="mt-6 flex justify-end">
+                <button
+                  type="submit"
+                  className="bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-full shadow-lg transition duration-200"
+                >
+                  Add Order
+                </button>
+              </div>
+               {/* Custom Alert/Message Modal for AddOrderForm */}
+              {showCustomModal && (
+                <Modal onClose={() => setShowCustomModal(false)}>
+                  <div className="p-6 text-center">
+                    <p className="text-xl font-semibold text-gray-800 dark:text-gray-200">{customModalMessage}</p>
+                    <button
+                      onClick={() => setShowCustomModal(false)}
+                      className="mt-6 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-full shadow-lg transition duration-200"
+                    >
+                      OK
+                    </button>
+                  </div>
+                </Modal>
+              )}
+            </form>
+          );
         };
 
-        const handleUpdateTaskStatus = async (orderId, taskId, currentStatus) => {
-            if (!db || !userId) {
-                setStatusMessage('Authentication not ready. Please wait.');
-                return;
+        // Order Details Component (shows tasks)
+        const OrderDetails = ({ order, bakerName, onUpdateTask }) => {
+          const getStatusColor = (status) => {
+            switch (status) {
+              case 'New': return 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
+              case 'In Progress': return 'bg-yellow-200 text-yellow-800 dark:bg-yellow-700 dark:text-yellow-200';
+              case 'Completed': return 'bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-200';
+              default: return 'bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
             }
-            const newStatus = currentStatus === 'Pending' ? 'Completed' : 'Pending';
-            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(orderId).collection('tasks').doc(taskId);
-            try {
-                await docRef.update({ status: newStatus });
-                setStatusMessage('Task status updated!');
-            } catch (error) {
-                console.error("Error updating task status: ", error);
-                setStatusMessage(`Error updating task status: ${error.message}`);
+          };
+
+          const statusEmojis = {
+            'New': '🆕',
+            'In Progress': '⏳',
+            'Completed': '✅'
+          };
+          
+          const [showCustomModal, setShowCustomModal] = useState(false);
+          const [customModalMessage, setCustomModalMessage] = useState('');
+
+          const handleClaim = (taskId) => {
+            if (bakerName.trim() === '') {
+              setCustomModalMessage("Please enter your name at the top to claim a task!");
+              setShowCustomModal(true);
+              return;
             }
-        };
+            onUpdateTask(order.id, taskId, 'In Progress', bakerName);
+          };
 
-        const handleDeleteOrder = async (id) => {
-            if (!db || !userId) {
-                setStatusMessage('Authentication not ready. Please wait.');
-                return;
-            }
-            // Note: This won't delete subcollections in Firestore. A more complex function is needed for that.
-            const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('orders').doc(id);
-            try {
-                await docRef.delete();
-                setStatusMessage('Order deleted successfully!');
-            } catch (error) {
-                console.error("Error deleting order: ", error);
-                setStatusMessage(`Error deleting order: ${error.message}`);
-            }
-        };
+          const handleComplete = (taskId) => {
+            onUpdateTask(order.id, taskId, 'Completed', bakerName);
+          };
 
-        const getTaskStatusColor = (status) => {
-            return status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
-        };
+          const handleUnassign = (taskId) => {
+            onUpdateTask(order.id, taskId, 'New', '');
+          };
 
-        const renderNewOrderModal = () => isNewOrderModalOpen && React.createElement(
-            'div',
-            { className: 'fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full flex items-center justify-center z-50' },
-            React.createElement(
-                'div',
-                { className: 'relative bg-white p-8 rounded-xl shadow-xl w-full max-w-md m-4' },
-                React.createElement('h2', { className: 'text-2xl font-bold mb-6 text-center' }, 'Add New Order'),
-                React.createElement(
-                    'form',
-                    { onSubmit: (e) => { e.preventDefault(); handleAddOrder(); } },
-                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'client' }, 'Client Name'), React.createElement('input', { type: 'text', id: 'client', name: 'client', value: newOrder.client, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline', required: true })),
-                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'dueDate' }, 'Due Date'), React.createElement('input', { type: 'date', id: 'dueDate', name: 'dueDate', value: newOrder.dueDate, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline', required: true })),
-                    React.createElement('div', { className: 'mb-4' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'orderItems' }, 'Order Items (One per line)'), React.createElement('textarea', { id: 'orderItems', name: 'orderItems', value: newOrder.orderItems, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24 resize-none', required: true })),
-                    React.createElement('div', { className: 'mb-6' }, React.createElement('label', { className: 'block text-gray-700 text-sm font-bold mb-2', htmlFor: 'notes' }, 'Notes'), React.createElement('textarea', { id: 'notes', name: 'notes', value: newOrder.notes, onChange: handleNewOrderChange, className: 'shadow appearance-none border rounded-lg w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline h-24 resize-none' })),
-                    React.createElement('div', { className: 'flex items-center justify-between' }, React.createElement('button', { type: 'submit', className: 'bg-blue-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300 focus:outline-none focus:shadow-outline' }, 'Add Order'), React.createElement('button', { type: 'button', onClick: () => setIsNewOrderModalOpen(false), className: 'bg-gray-400 text-white font-bold py-2 px-4 rounded-xl shadow-lg hover:bg-gray-500 transition duration-300 focus:outline-none focus:shadow-outline' }, 'Cancel'))
-                )
-            )
-        );
-
-        // Main render function
-        return React.createElement(
-            'div',
-            { className: 'min-h-screen bg-gray-100 p-8 flex flex-col items-center' },
-            React.createElement(
-                'header',
-                { className: 'w-full max-w-4xl text-center py-6' },
-                React.createElement('h1', { className: 'text-4xl font-bold text-gray-800 mb-2' }, 'Bakery Order System'),
-                React.createElement('p', { className: 'text-gray-600 mb-4' }, 'Manage orders and tasks for your bakers. User ID: ', userId || 'Loading...'),
-                React.createElement('button', { onClick: () => setIsNewOrderModalOpen(true), className: 'bg-blue-600 text-white font-semibold py-2 px-6 rounded-xl shadow-lg hover:bg-blue-700 transition duration-300' }, React.createElement('i', { className: 'fas fa-plus mr-2' }), ' Add New Order')
-            ),
-            React.createElement(
-                'main',
-                { className: 'w-full max-w-4xl mt-8' },
-                statusMessage && React.createElement('div', { className: 'bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded-lg relative mb-4' }, statusMessage),
-                !isAuthReady || !userId ? (
-                    React.createElement('div', { className: 'flex flex-col items-center justify-center py-20' }, React.createElement('div', { className: 'loading-spinner mb-4' }), React.createElement('p', { className: 'text-gray-500' }, 'Connecting to Firebase...'))
-                ) : orders.length === 0 ? (
-                    React.createElement('div', { className: 'text-center text-gray-500 py-10' }, React.createElement('i', { className: 'fas fa-box-open text-6xl mb-4' }), React.createElement('p', null, 'You have no orders yet. Add a new one to get started!'))
+          return (
+            <div className="p-6">
+              <h3 className="text-2xl font-bold text-gray-800 dark:text-gray-200 mb-2">{order.customerName}'s Order</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Due: {new Date(order.dueDate).toLocaleDateString()} at {order.dueTime}</p>
+              
+              <div className="space-y-4">
+                {(order.tasks || []).length === 0 ? (
+                  <p className="text-center text-gray-500 dark:text-gray-400">No tasks for this order.</p>
                 ) : (
-                    React.createElement(
-                        'div',
-                        { className: 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' },
-                        orders.map(order =>
-                            React.createElement(
-                                'div',
-                                { key: order.id, className: 'order-card bg-white p-6 rounded-2xl shadow-md flex flex-col justify-between animate-fadeIn' },
-                                React.createElement('h3', { className: 'text-xl font-semibold text-gray-900 truncate' }, 'Order for ', order.client),
-                                React.createElement('p', { className: 'text-sm text-gray-500' }, 'Due: ', order.dueDate),
-                                order.notes && React.createElement('p', { className: 'text-sm text-gray-500 mt-2 italic' }, 'Notes: ', order.notes),
-                                React.createElement(
-                                    'div',
-                                    { className: 'mt-4' },
-                                    React.createElement('h4', { className: 'font-semibold text-gray-700' }, 'Tasks'),
-                                    order.tasks.length > 0 ? (
-                                        React.createElement(
-                                            'ul',
-                                            { className: 'mt-2 space-y-2' },
-                                            order.tasks.map(task =>
-                                                React.createElement(
-                                                    'li',
-                                                    { key: task.id, className: `p-3 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between ${getTaskStatusColor(task.status)}` },
-                                                    React.createElement('div', { className: 'flex-1 mb-2 sm:mb-0' },
-                                                        React.createElement('p', { className: 'text-sm font-medium' }, task.description),
-                                                        React.createElement('p', { className: 'text-xs text-gray-600' }, task.assignedTo ? `Assigned to: ${task.assignedTo}` : 'Unassigned')
-                                                    ),
-                                                    React.createElement(
-                                                        'div',
-                                                        { className: 'flex flex-wrap items-center space-x-2' },
-                                                        React.createElement(
-                                                            'select',
-                                                            {
-                                                                value: task.assignedTo || '',
-                                                                onChange: (e) => handleUpdateTaskAssignment(order.id, task.id, e.target.value),
-                                                                className: 'text-xs p-1 border rounded-lg'
-                                                            },
-                                                            React.createElement('option', { value: '' }, 'Unassign'),
-                                                            React.createElement('option', { value: 'Baker 1' }, 'Baker 1'),
-                                                            React.createElement('option', { value: 'Baker 2' }, 'Baker 2')
-                                                        ),
-                                                        React.createElement(
-                                                            'button',
-                                                            {
-                                                                onClick: () => handleUpdateTaskStatus(order.id, task.id, task.status),
-                                                                className: `p-2 rounded-full transition duration-300 ${task.status === 'Pending' ? 'text-green-600 hover:bg-green-200' : 'text-yellow-600 hover:bg-yellow-200'}`
-                                                            },
-                                                            React.createElement('i', { className: `fas ${task.status === 'Pending' ? 'fa-check' : 'fa-undo-alt'}` })
-                                                        )
-                                                    )
-                                                )
-                                            )
-                                        )
-                                    ) : (
-                                        React.createElement('p', { className: 'text-sm text-gray-500 italic mt-2' }, 'No tasks for this order. (Please enter items in the order field)')
-                                    )
-                                ),
-                                React.createElement(
-                                    'div',
-                                    { className: 'flex items-center mt-6 space-x-2' },
-                                    React.createElement(
-                                        'button',
-                                        {
-                                            onClick: () => handleDeleteOrder(order.id),
-                                            className: 'bg-red-500 text-white p-3 rounded-full hover:bg-red-600 transition duration-300'
-                                        },
-                                        React.createElement('i', { className: 'fas fa-trash' })
-                                    )
-                                )
-                            )
-                        )
-                    )
-                ),
-                renderNewOrderModal()
-            )
-        );
-    }
-
-    // Use window.onload to ensure the entire page is loaded before trying to render the React app.
-    window.onload = function() {
-        try {
-            // First, initialize Firebase outside the React component.
-            if (typeof __firebase_config !== 'undefined') {
-                const firebaseConfig = JSON.parse(__firebase_config);
-                app = firebase.initializeApp(firebaseConfig);
-            } else if (myFirebaseConfig.projectId) {
-                app = firebase.initializeApp(myFirebaseConfig);
-            } else {
-                throw new Error("Firebase configuration is missing.");
-            }
-            db = firebase.firestore();
-            auth = firebase.auth();
-            
-            // Hide the initial loading message.
-            document.getElementById('initial-message').style.display = 'none';
-
-            // Show the root div
-            document.getElementById('root').style.display = 'block';
-
-            // Render the App component into the root div.
-            const root = ReactDOM.createRoot(document.getElementById('root'));
-            root.render(React.createElement(App));
-        } catch (error) {
-            console.error("Application failed to render:", error);
-            const rootElement = document.getElementById('root');
-            const initialMessageElement = document.getElementById('initial-message');
-            
-            if (initialMessageElement) {
-                initialMessageElement.innerHTML = `
-                    <div class="p-8 text-center text-red-600">
-                        <h1 class="text-2xl font-bold mb-2">Fatal Error</h1>
-                        <p>The application could not be loaded. Please check the console for details.</p>
-                        <p class="mt-2 text-sm text-gray-500">Error: ${error.message}</p>
+                  (order.tasks || []).map((task) => (
+                    <div key={task.id} className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
+                      <div className="flex justify-between items-center mb-2">
+                        <p className="font-semibold text-gray-800 dark:text-gray-200">{task.taskName}</p>
+                        <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${getStatusColor(task.status)}`}>
+                          {statusEmojis[task.status]} {task.status}
+                        </span>
+                      </div>
+                      {task.assignedBaker && (
+                        <p className="text-sm text-gray-600 dark:text-gray-400">Assigned to: <span className="font-bold text-rose-500">{task.assignedBaker}</span></p>
+                      )}
+                      <div className="mt-4 flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                        {task.status === 'New' && (
+                          <button
+                            onClick={() => handleClaim(task.id)}
+                            className="flex-1 bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-200"
+                          >
+                            Claim Task
+                          </button>
+                        )}
+                        {task.status === 'In Progress' && task.assignedBaker === bakerName && (
+                          <button
+                            onClick={() => handleComplete(task.id)}
+                            className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-200"
+                          >
+                            Mark as Completed
+                          </button>
+                        )}
+                        {task.status === 'In Progress' && task.assignedBaker === bakerName && (
+                          <button
+                            onClick={() => handleUnassign(task.id)}
+                            className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-200"
+                          >
+                            Unassign
+                          </button>
+                        )}
+                      </div>
                     </div>
-                `;
-                initialMessageElement.style.display = 'block';
-            } else if (rootElement) {
-                rootElement.innerHTML = `
-                    <div class="p-8 text-center text-red-600">
-                        <h1 class="text-2xl font-bold mb-2">Fatal Error</h1>
-                        <p>The application could not be loaded. Please check the console for details.</p>
-                        <p class="mt-2 text-sm text-gray-500">Error: ${error.message}</p>
-                    </div>
-                `;
-                rootElement.style.display = 'block';
-            }
-        }
-    };
-</script>
+                  ))
+                )}
+              </div>
+              {/* Custom Alert/Message Modal for OrderDetails */}
+              {showCustomModal && (
+                <Modal onClose={() => setShowCustomModal(false)}>
+                  <div className="p-6 text-center">
+                    <p className="text-xl font-semibold text-gray-800 dark:text-gray-200">{customModalMessage}</p>
+                    <button
+                      onClick={() => setShowCustomModal(false)}
+                      className="mt-6 bg-rose-500 hover:bg-rose-600 text-white font-bold py-2 px-4 rounded-full shadow-lg transition duration-200"
+                    >
+                      OK
+                    </button>
+                  </div>
+                </Modal>
+              )}
+            </div>
+          );
+        };
+
+        // Generic Modal Component
+        const Modal = ({ children, onClose }) => {
+          return (
+            <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 w-full max-w-lg relative max-h-screen overflow-y-auto">
+                <button
+                  onClick={onClose}
+                  className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:text-gray-600 dark:hover:text-gray-400"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                {children}
+              </div>
+            </div>
+          );
+        };
+
+        // Render the App component into the root div
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
 </body>
 </html>
