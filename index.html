@@ -102,31 +102,35 @@
               // Set up an auth state listener to get the user object
               const unsubscribeAuth = window.onAuthStateChanged(window.firebaseAuth, (authUser) => {
                 setUser(authUser);
-                setIsLoading(false);
                 console.log("Auth state changed. User:", authUser ? authUser.uid : 'null');
+                
+                // Once the user is authenticated, set up the Firestore listener
+                if (authUser) {
+                    const ordersColRef = window.collection(window.firebaseDb, `artifacts/${window.firebaseAppId}/public/data/orders`);
+                    const unsubscribeOrders = window.onSnapshot(ordersColRef, (snapshot) => {
+                        console.log("Received new orders snapshot. Processing...");
+                        const ordersData = snapshot.docs.map(orderDoc => ({
+                            id: orderDoc.id,
+                            ...orderDoc.data(),
+                        }));
+                        setOrders(ordersData);
+                        console.log("Orders updated:", ordersData.length, "orders found.");
+                        setIsLoading(false); // Turn off loading state after first data load
+                    }, (error) => {
+                        console.error("Error fetching orders:", error);
+                        setCustomModalMessage(`Error fetching orders: ${error.message}`);
+                        setShowCustomModal(true);
+                        setIsLoading(false); // Turn off loading on error too
+                    });
+                    return () => unsubscribeOrders();
+                } else {
+                    // If no user, set loading to false and clear orders
+                    setIsLoading(false);
+                    setOrders([]);
+                }
               });
               
-              // Set up real-time listener for orders
-              const ordersColRef = window.collection(window.firebaseDb, `artifacts/${window.firebaseAppId}/public/data/orders`);
-              const unsubscribeOrders = window.onSnapshot(ordersColRef, (snapshot) => {
-                console.log("Received new orders snapshot. Processing...");
-                const ordersData = snapshot.docs.map(orderDoc => ({
-                  id: orderDoc.id,
-                  ...orderDoc.data(),
-                }));
-                setOrders(ordersData);
-                console.log("Orders updated:", ordersData.length, "orders found.");
-              }, (error) => {
-                console.error("Error fetching orders:", error);
-                setCustomModalMessage(`Error fetching orders: ${error.message}`);
-                setShowCustomModal(true);
-              });
-
-              return () => {
-                unsubscribeAuth();
-                unsubscribeOrders();
-                console.log("Unsubscribed from all listeners.");
-              };
+              return () => unsubscribeAuth();
             }
           }, []);
           
@@ -140,13 +144,19 @@
             }
             try {
               console.log("Attempting to add new order...");
-              const taskObjects = tasks.map(taskName => ({
+              const taskObjects = tasks.filter(task => task.trim() !== '').map(taskName => ({
                 taskName,
                 status: 'New',
                 assignedBaker: '',
                 id: crypto.randomUUID()
               }));
               
+              if (taskObjects.length === 0) {
+                 setCustomModalMessage("Please add at least one task.");
+                 setShowCustomModal(true);
+                 return;
+              }
+
               const ordersColRef = window.collection(db, `artifacts/${appId}/public/data/orders`);
               await window.addDoc(ordersColRef, {
                 ...orderData,
