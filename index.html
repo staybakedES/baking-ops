@@ -23,12 +23,51 @@
     <!-- Load Babel to transpile JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Load Firebase libraries from CDN -->
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <!-- Load Firebase libraries from CDN. Using v9 for better modularity. -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
 
+        // This script block will be executed once and provides the global variables needed for the React app
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Expose Firebase instances and functions to the global window object so the React script can access them
+        window.firebaseApp = app;
+        window.firebaseAuth = auth;
+        window.firebaseDb = db;
+        window.firebaseAuthToken = initialAuthToken;
+        window.firebaseAppId = appId;
+        // Expose Firestore functions to global scope for the React component
+        window.collection = collection;
+        window.addDoc = addDoc;
+        window.doc = doc;
+        window.updateDoc = updateDoc;
+        window.deleteDoc = deleteDoc;
+        window.onSnapshot = onSnapshot;
+
+        // Sign in the user. We must do this before any Firestore operations.
+        const signIn = async () => {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                console.log("Firebase authentication successful.");
+            } catch (error) {
+                console.error("Firebase authentication error:", error);
+            }
+        };
+
+        signIn();
+    </script>
     <script type="text/babel">
         // All of the React components are defined within this script block.
         // This makes the code self-contained and ready to run.
@@ -39,6 +78,7 @@
           const [db, setDb] = useState(null);
           const [auth, setAuth] = useState(null);
           const [user, setUser] = useState(null);
+          const [appId, setAppId] = useState(null);
           const [orders, setOrders] = useState([]);
           const [isLoading, setIsLoading] = useState(true);
           const [bakerName, setBakerName] = useState('');
@@ -49,59 +89,34 @@
           const [customModalMessage, setCustomModalMessage] = useState('');
           const [showConfirmModal, setShowConfirmModal] = useState(false);
           const [confirmAction, setConfirmAction] = useState(null);
-
-          // Constants for Firebase and user IDs
-          const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-          const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-          const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+          const [firestoreReady, setFirestoreReady] = useState(false);
 
           // Initialize Firebase and set up authentication
           useEffect(() => {
-            const initializeFirebase = async () => {
-              try {
-                console.log("Initializing Firebase app...");
-                const app = firebase.initializeApp(firebaseConfig);
-                const authInstance = firebase.auth();
-                const dbInstance = firebase.firestore();
+            // Wait for Firebase to be initialized and exposed to the window
+            if (window.firebaseApp && window.firebaseAuth && window.firebaseDb) {
+              setDb(window.firebaseDb);
+              setAuth(window.firebaseAuth);
+              setAppId(window.firebaseAppId);
+              setFirestoreReady(true);
 
-                setAuth(authInstance);
-                setDb(dbInstance);
-
-                if (initialAuthToken) {
-                  console.log("Signing in with custom token...");
-                  await authInstance.signInWithCustomToken(initialAuthToken);
-                } else {
-                  console.log("Signing in anonymously...");
-                  await authInstance.signInAnonymously();
-                }
-                console.log("Firebase initialized successfully.");
-              } catch (error) {
-                console.error("Error initializing Firebase:", error);
-                setCustomModalMessage(`Error initializing Firebase: ${error.message}`);
-                setShowCustomModal(true);
-              }
-            };
-            initializeFirebase();
-          }, [initialAuthToken, JSON.stringify(firebaseConfig)]);
-
-          // Listen for authentication state changes and set the user
-          useEffect(() => {
-            if (auth) {
-              const unsubscribe = auth.onAuthStateChanged((authUser) => {
+              // Set up an auth state listener to get the user object
+              const unsubscribe = window.firebaseAuth.onAuthStateChanged((authUser) => {
                 setUser(authUser);
                 setIsLoading(false);
                 console.log("Auth state changed. User:", authUser ? authUser.uid : 'null');
               });
               return () => unsubscribe();
             }
-          }, [auth]);
+          }, []);
+          
 
           // Listen for real-time updates to the orders collection
           useEffect(() => {
-            if (db && user) {
+            if (db && user && appId && firestoreReady) {
               console.log("Setting up real-time listener for orders...");
-              const ordersColRef = db.collection(`artifacts/${appId}/public/data/orders`);
-              const unsubscribe = ordersColRef.onSnapshot((snapshot) => {
+              const ordersColRef = window.collection(db, `artifacts/${appId}/public/data/orders`);
+              const unsubscribe = window.onSnapshot(ordersColRef, (snapshot) => {
                 console.log("Received new orders snapshot. Processing...");
                 const ordersData = snapshot.docs.map(orderDoc => ({
                   id: orderDoc.id,
@@ -119,11 +134,11 @@
                 console.log("Unsubscribed from orders listener.");
               };
             }
-          }, [db, user, appId]);
+          }, [db, user, appId, firestoreReady]);
 
           // Function to add a new order and its tasks
           const handleAddOrder = async (orderData, tasks) => {
-            if (!db || !user) {
+            if (!db || !user || !appId) {
               setCustomModalMessage("Database or user authentication not ready. Please try again.");
               setShowCustomModal(true);
               return;
@@ -136,11 +151,12 @@
                 assignedBaker: '',
                 id: crypto.randomUUID()
               }));
-
-              await db.collection(`artifacts/${appId}/public/data/orders`).add({
+              
+              const ordersColRef = window.collection(db, `artifacts/${appId}/public/data/orders`);
+              await window.addDoc(ordersColRef, {
                 ...orderData,
                 tasks: taskObjects,
-                createdAt: new Date(),
+                createdAt: new Date().toISOString(), // Use ISO string for consistency
                 userId: user.uid,
               });
 
@@ -155,13 +171,13 @@
 
           // Function to update a task's status and assigned baker
           const handleUpdateTask = async (orderId, taskId, newStatus, assignedBaker) => {
-            if (!db) {
+            if (!db || !appId) {
               setCustomModalMessage("Database not initialized. Please try again.");
               setShowCustomModal(true);
               return;
             }
             try {
-              const orderRef = db.collection(`artifacts/${appId}/public/data/orders`).doc(orderId);
+              const orderRef = window.doc(db, `artifacts/${appId}/public/data/orders`, orderId);
               const orderToUpdate = orders.find(order => order.id === orderId);
               if (!orderToUpdate) {
                 console.error("Order not found for update.");
@@ -178,7 +194,7 @@
                 return task;
               });
               console.log("Attempting to update tasks for order:", orderId);
-              await orderRef.update({ tasks: updatedTasks });
+              await window.updateDoc(orderRef, { tasks: updatedTasks });
               console.log("Task updated successfully.");
             } catch (e) {
               console.error("Error updating task: ", e);
@@ -189,15 +205,15 @@
 
           // Function to delete an order
           const handleDeleteOrder = async (orderId) => {
-            if (!db) {
+            if (!db || !appId) {
               setCustomModalMessage("Database not initialized. Please try again.");
               setShowCustomModal(true);
               return;
             }
             try {
               console.log("Attempting to delete order:", orderId);
-              const orderRef = db.collection(`artifacts/${appId}/public/data/orders`).doc(orderId);
-              await orderRef.delete();
+              const orderRef = window.doc(db, `artifacts/${appId}/public/data/orders`, orderId);
+              await window.deleteDoc(orderRef);
               console.log("Order deleted successfully.");
               setShowConfirmModal(false); // Close modal after successful deletion
             } catch (e) {
@@ -392,8 +408,8 @@
                   }}
                   className="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-full shadow-md transition duration-200"
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.166a40.415 40.415 0 0 1-.189 3.208.54.54 0 0 1-.587.514C3.25 9.176 1.5 8.232 1.5 6.75c0-1.228 1.503-2.222 3.352-2.222.188 0 .367.015.545.045m-3.92 4.053a.545.545 0 0 0 .545.045m-3.92 4.053a.545.545 0 0 0 .545.045" />
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                   </svg>
                 </button>
               </div>
