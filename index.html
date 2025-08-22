@@ -17,33 +17,23 @@
 <body>
     <div id="root"></div>
 
-    <!-- Load React and ReactDOM from CDN -->
+    <!-- Load React, ReactDOM, and Babel from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- Load Babel to transpile JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Load Firebase libraries from CDN and expose them to the global scope -->
+    <!--
+      This script block handles Firebase initialization and exposes the necessary
+      instances and functions globally for the React app to use. This prevents
+      the race condition issue.
+    -->
     <script type="module">
+        // Import Firebase modules using a module script
         import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
         import { getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
 
-        // This script block will be executed once and provides the global variables needed for the React app
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-
-        // Expose Firebase instances and functions to the global window object so the React script can access them
-        window.firebaseApp = app;
-        window.firebaseAuth = auth;
-        window.firebaseDb = db;
-        window.firebaseAuthToken = initialAuthToken;
-        window.firebaseAppId = appId;
+        // Expose Firebase and other necessary functions globally
         window.initializeApp = initializeApp;
         window.getAuth = getAuth;
         window.getFirestore = getFirestore;
@@ -57,33 +47,55 @@
         window.deleteDoc = deleteDoc;
         window.onSnapshot = onSnapshot;
 
-        // Sign in the user. We must do this before any Firestore operations.
-        const signIn = async () => {
+        // Sign in the user immediately
+        async function setupFirebaseAndSignIn() {
             try {
+                // Accessing the provided global variables
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                const app = window.initializeApp(firebaseConfig);
+                const auth = window.getAuth(app);
+                
                 if (initialAuthToken) {
                     await window.signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await window.signInAnonymously(auth);
                 }
-                console.log("Firebase authentication successful.");
+
+                console.log("Firebase authentication successful and setup complete.");
             } catch (error) {
-                console.error("Firebase authentication error:", error);
+                console.error("Firebase setup or authentication error:", error);
             }
-        };
-        signIn();
+        }
+        setupFirebaseAndSignIn();
     </script>
 
+    <!--
+      This script block contains the full React application written in JSX.
+      Babel transpiles this code in the browser.
+    -->
     <script type="text/babel">
-        // All of the React components are defined within this script block.
-        // This makes the code self-contained and ready to run.
         const { useState, useEffect } = React;
 
-        // Main App component
+        // Polyfill for crypto.randomUUID for older browsers
+        if (typeof crypto.randomUUID !== 'function') {
+            crypto.randomUUID = function() {
+                return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+                );
+            };
+        }
+
+        // --- Main App Component ---
         const App = () => {
+          // State for Firebase instances and user info
           const [db, setDb] = useState(null);
           const [user, setUser] = useState(null);
           const [appId, setAppId] = useState(null);
           const [isAuthReady, setIsAuthReady] = useState(false);
+
+          // State for application data and UI
           const [orders, setOrders] = useState([]);
           const [bakerName, setBakerName] = useState('');
           const [showAddOrderModal, setShowAddOrderModal] = useState(false);
@@ -94,30 +106,37 @@
           const [showConfirmModal, setShowConfirmModal] = useState(false);
           const [confirmAction, setConfirmAction] = useState(null);
 
-          // This useEffect handles the full Firebase initialization and authentication
+          // This effect initializes the app and listens for auth state changes
           useEffect(() => {
-            // Wait for Firebase to be initialized and exposed to the window
-            if (window.firebaseApp && window.firebaseAuth && window.firebaseDb) {
-              setDb(window.firebaseDb);
-              setAppId(window.firebaseAppId);
+            // Wait for Firebase to be available in the window object
+            if (window.initializeApp && window.getAuth && window.getFirestore) {
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                const app = window.initializeApp(firebaseConfig);
+                const auth = window.getAuth(app);
+                const firestore = window.getFirestore(app);
 
-              // Set up an auth state listener to get the user object
-              const unsubscribeAuth = window.onAuthStateChanged(window.firebaseAuth, (authUser) => {
-                if (authUser) {
-                  setUser(authUser);
-                } else {
-                  setUser(null);
-                }
-                setIsAuthReady(true);
-              });
-              
-              return () => unsubscribeAuth();
+                // Set Firestore instance and app ID in state
+                setDb(firestore);
+                setAppId(typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
+
+                // Listener for authentication state changes
+                const unsubscribeAuth = window.onAuthStateChanged(auth, (authUser) => {
+                    if (authUser) {
+                        setUser(authUser);
+                    } else {
+                        setUser(null);
+                    }
+                    setIsAuthReady(true);
+                });
+                
+                return () => unsubscribeAuth();
             }
           }, []);
 
-          // This useEffect listens for orders, but only after authentication is ready
+          // This effect subscribes to Firestore data changes in real-time
           useEffect(() => {
               let unsubscribeOrders = () => {};
+              // Only subscribe once auth is ready and we have the necessary instances
               if (isAuthReady && user && db && appId) {
                   const ordersColRef = window.collection(db, `artifacts/${appId}/public/data/orders`);
                   unsubscribeOrders = window.onSnapshot(ordersColRef, (snapshot) => {
@@ -136,7 +155,7 @@
           }, [isAuthReady, user, db, appId]);
 
 
-          // Function to add a new order and its tasks
+          // Function to add a new order and its tasks to Firestore
           const handleAddOrder = async (orderData, tasks) => {
             if (!db || !user || !appId) {
               setCustomModalMessage("Database or user authentication not ready. Please try again.");
@@ -173,7 +192,7 @@
             }
           };
 
-          // Function to update a task's status and assigned baker
+          // Function to update a specific task's status and assigned baker
           const handleUpdateTask = async (orderId, taskId, newStatus, assignedBaker) => {
             if (!db || !appId) {
               setCustomModalMessage("Database not initialized. Please try again.");
@@ -205,7 +224,7 @@
             }
           };
 
-          // Function to delete an order
+          // Function to delete an entire order
           const handleDeleteOrder = async (orderId) => {
             if (!db || !appId) {
               setCustomModalMessage("Database not initialized. Please try again.");
@@ -223,7 +242,7 @@
             }
           };
 
-          // Loading state handler
+          // Show a loading screen while authentication is in progress
           if (!isAuthReady) {
             return (
               <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
@@ -238,6 +257,7 @@
             );
           }
 
+          // Main application UI
           return (
             <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-50 p-4 font-sans">
               <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
@@ -365,7 +385,9 @@
           );
         };
 
-        // Order Card Component
+        // --- Component Definitions ---
+
+        // A reusable component to display a single order card.
         const OrderCard = ({ order, onDelete, onSelect }) => {
           const completedTasks = (order.tasks || []).filter(task => task.status === 'Completed').length;
           const totalTasks = (order.tasks || []).length;
@@ -417,7 +439,7 @@
           );
         };
 
-        // Add Order Form Component
+        // Form for creating a new order
         const AddOrderForm = ({ onAddOrder }) => {
           const [customerName, setCustomerName] = useState('');
           const [dueDate, setDueDate] = useState('');
@@ -529,8 +551,7 @@
                   Add Order
                 </button>
               </div>
-               {/* Custom Alert/Message Modal for AddOrderForm */}
-              {showCustomModal && (
+               {showCustomModal && (
                 <Modal onClose={() => setShowCustomModal(false)}>
                   <div className="p-6 text-center">
                     <p className="text-xl font-semibold text-gray-800 dark:text-gray-200">{customModalMessage}</p>
@@ -547,7 +568,7 @@
           );
         };
 
-        // Order Details Component (shows tasks)
+        // Component to show and manage tasks for a selected order
         const OrderDetails = ({ order, bakerName, onUpdateTask }) => {
           const getStatusColor = (status) => {
             switch (status) {
@@ -634,7 +655,6 @@
                   ))
                 )}
               </div>
-              {/* Custom Alert/Message Modal for OrderDetails */}
               {showCustomModal && (
                 <Modal onClose={() => setShowCustomModal(false)}>
                   <div className="p-6 text-center">
@@ -652,7 +672,7 @@
           );
         };
 
-        // Generic Modal Component
+        // A generic modal component to display content
         const Modal = ({ children, onClose }) => {
           return (
             <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
@@ -671,7 +691,7 @@
           );
         };
 
-        // Render the App component into the root div
+        // Initial render of the App component
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
         root.render(<App />);
